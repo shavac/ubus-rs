@@ -16,4 +16,4 @@ default = []
 no_std = []
 
 [dependencies]
-storage_endian = { git = "https://github.com/jbit/storage_endian" }
+storage_endian = { git = "https://github.com/jbit/storage_endian.git", version = "0.1.0" }

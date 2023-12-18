@@ -1,6 +1,8 @@
-use std::path::Path;
+use std::{path::Path, convert::TryInto};
 
-use ubus::BlobMsgData;
+use ubus::{BlobMsgData, BlobMsg};
+
+use std::net::Ipv4Addr;
 
 fn main() {
     let socket = Path::new("/var/run/ubus/ubus.sock");
@@ -14,6 +16,7 @@ fn main() {
     };
     connection
         .lookup(
+            "network.interface.lan",
             |obj| {
                 println!("\n{:?}", obj);
             },
@@ -26,25 +29,35 @@ fn main() {
             },
         )
         .unwrap();
-    match connection.invoke(0x2770adca, "board", &[], |bi| {
+
+    let obj_id = connection.lookup_id("network.interface.lan").unwrap();
+    let mut addressv4 = Ipv4Addr::UNSPECIFIED;
+    connection.invoke(obj_id, "status", &[], |bi| {
         for x in bi {
-            // let xs = match x.data {
-            //     //BlobMsgData::Table(_) => todo!(),
-            //     BlobMsgData::Int64(_) => todo!(),
-            //     BlobMsgData::Int32(_) => todo!(),
-            //     BlobMsgData::Int16(_) => todo!(),
-            //     BlobMsgData::Int8(_) => todo!(),
-            //     BlobMsgData::Double(_) => todo!(),
-            //     BlobMsgData::Unknown(_, _) => todo!(),
-            //     _ => 
-            // }
-            println!("{:?}: {:?}", x.name.unwrap_or_default(), x.data);
+            if x.name == Some("ipv4-address"){
+                //println!("{:?}: {:?}", x.name.unwrap(), x.data);
+                match x.data {
+                    BlobMsgData::Array(addr_list) => {
+                        for addr in addr_list {
+                            if let BlobMsgData::Table(addr_table) = addr.data {
+                                for in_addr in addr_table {
+                                    match in_addr.name {
+                                        Some("address") => if let BlobMsgData::String(addr_str) = in_addr.data {
+                                            addressv4 = addr_str.parse().unwrap();
+                                        },
+                                        //Some("mask") => println!("mask: {:?}", in_addr.data),
+                                        None => (),
+                                        _ => (),
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    _ => ()
+                }
+            }
         }
-    }) {
-        Ok(res) => res,
-        Err(err) => {
-            eprintln!("Failed to invoke method. {}", err);
-            return;
-        }
-    };
+    }).unwrap();
+    println!("{:X}", obj_id);
+    println!("{:?}", addressv4);
 }

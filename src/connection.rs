@@ -123,6 +123,7 @@ impl<T: IO> Connection<T> {
 
     pub fn lookup(
         &mut self,
+        obj_path: &str,
         mut on_object: impl FnMut(ObjectResult),
         mut on_signature: impl FnMut(SignatureResult),
     ) -> Result<(), Error<T::Error>> {
@@ -130,7 +131,7 @@ impl<T: IO> Connection<T> {
         let sequence = self.sequence.into();
 
         let mut buffer = [0u8; 1024];
-        let message = MessageBuilder::new(
+        let mut message = MessageBuilder::new(
             &mut buffer,
             MessageHeader {
                 version: MessageVersion::CURRENT,
@@ -140,7 +141,7 @@ impl<T: IO> Connection<T> {
             },
         )
         .unwrap();
-
+        message.put(MessageAttr::ObjPath(obj_path)).unwrap();
         self.send(message)?;
 
         loop {
@@ -202,5 +203,20 @@ impl<T: IO> Connection<T> {
                 }
             }
         }
+    }
+
+    pub fn lookup_id(
+        &mut self,
+        obj_path: &str,
+    ) -> Result<u32, Error<T::Error>> {
+        let mut obj_id = 0u32;
+        self.lookup(
+            obj_path,
+            |obj|{
+                obj_id = obj.id
+            },
+            |_|{},
+        )?;
+        Ok(obj_id)
     }
 }

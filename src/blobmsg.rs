@@ -1,6 +1,7 @@
 use super::{Blob, BlobIter, Error};
 use core::convert::{TryFrom, TryInto};
 use core::str;
+use serde::{Deserialize, Serialize};
 
 values!(pub BlobMsgType(u32) {
     UNSPEC = 0,
@@ -26,7 +27,7 @@ pub enum BlobMsgData<'a> {
     Double(f64),
     Unknown(BlobMsgType, &'a [u8]),
 }
-
+//#[derive(Deserialize, Serialize)]
 pub struct BlobMsg<'a> {
     pub name: Option<&'a str>,
     pub data: BlobMsgData<'a>,

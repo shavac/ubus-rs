@@ -40,7 +40,7 @@ impl<T: IO> Connection<T> {
 
         // Verify the header is what we expect
         valid_data!(
-            message.header.message == MessageType::HELLO,
+            message.header.message == UbusMsgType::HELLO,
             "Expected hello"
         );
 
@@ -51,11 +51,11 @@ impl<T: IO> Connection<T> {
     }
 
     // Get next message from ubus channel (blocking!)
-    pub fn next_message(&mut self) -> Result<Message, Error<T::Error>> {
-        Message::from_io(&mut self.io, &mut self.buffer)
+    pub fn next_message(&mut self) -> Result<UbusMsg, Error<T::Error>> {
+        UbusMsg::from_io(&mut self.io, &mut self.buffer)
     }
 
-    pub fn send(&mut self, message: MessageBuilder) -> Result<(), Error<T::Error>> {
+    pub fn send(&mut self, message: UbusMsgBuilder) -> Result<(), Error<T::Error>> {
         self.io.put(message.into())
     }
 
@@ -63,27 +63,27 @@ impl<T: IO> Connection<T> {
         &mut self,
         obj: u32,
         method: &str,
-        _args: &[BlobMsgData],
+        args: &[BlobMsgData],
         mut on_result: impl FnMut(BlobIter<BlobMsg>),
     ) -> Result<(), Error<T::Error>> {
         self.sequence += 1;
         let sequence = self.sequence.into();
 
         let mut buffer = [0u8; 1024];
-        let mut message = MessageBuilder::new(
+        let mut message = UbusMsgBuilder::new(
             &mut buffer,
-            MessageHeader {
-                version: MessageVersion::CURRENT,
-                message: MessageType::INVOKE,
+            UbusMsgHeader {
+                version: UbusMsgVersion::CURRENT,
+                message: UbusMsgType::INVOKE,
                 sequence,
                 peer: obj.into(),
             },
         )
         .unwrap();
 
-        message.put(MessageAttr::ObjId(obj))?;
-        message.put(MessageAttr::Method(method))?;
-        message.put(MessageAttr::Data(&[]))?;
+        message.put(UbusMsgAttr::ObjId(obj))?;
+        message.put(UbusMsgAttr::Method(method))?;
+        message.put(UbusMsgAttr::Data(&[]))?;
 
         self.send(message)?;
         'message: loop {
@@ -92,22 +92,22 @@ impl<T: IO> Connection<T> {
                 continue;
             }
 
-            let attrs = BlobIter::<MessageAttr>::new(message.blob.data);
+            let attrs = BlobIter::<UbusMsgAttr>::new(message.blob.data);
 
             match message.header.message {
-                MessageType::STATUS => {
+                UbusMsgType::STATUS => {
                     for attr in attrs {
-                        if let MessageAttr::Status(0) = attr {
+                        if let UbusMsgAttr::Status(0) = attr {
                             return Ok(());
-                        } else if let MessageAttr::Status(status) = attr {
+                        } else if let UbusMsgAttr::Status(status) = attr {
                             return Err(Error::Status(status));
                         }
                     }
                     return Err(Error::InvalidData("Invalid status message"));
                 }
-                MessageType::DATA => {
+                UbusMsgType::DATA => {
                     for attr in attrs {
-                        if let MessageAttr::Data(data) = attr {
+                        if let UbusMsgAttr::Data(data) = attr {
                             on_result(BlobIter::<BlobMsg>::new(data));
                             continue 'message;
                         }
@@ -131,17 +131,19 @@ impl<T: IO> Connection<T> {
         let sequence = self.sequence.into();
 
         let mut buffer = [0u8; 1024];
-        let mut message = MessageBuilder::new(
+        let mut message = UbusMsgBuilder::new(
             &mut buffer,
-            MessageHeader {
-                version: MessageVersion::CURRENT,
-                message: MessageType::LOOKUP,
+            UbusMsgHeader {
+                version: UbusMsgVersion::CURRENT,
+                message: UbusMsgType::LOOKUP,
                 sequence,
                 peer: 0.into(),
             },
         )
         .unwrap();
-        message.put(MessageAttr::ObjPath(obj_path)).unwrap();
+        if obj_path.len() != 0 {
+            message.put(UbusMsgAttr::ObjPath(obj_path)).unwrap();
+        }
         self.send(message)?;
 
         loop {
@@ -150,20 +152,20 @@ impl<T: IO> Connection<T> {
                 continue;
             }
 
-            let attrs = BlobIter::<MessageAttr>::new(message.blob.data);
+            let attrs = BlobIter::<UbusMsgAttr>::new(message.blob.data);
 
-            if message.header.message == MessageType::STATUS {
+            if message.header.message == UbusMsgType::STATUS {
                 for attr in attrs {
-                    if let MessageAttr::Status(0) = attr {
+                    if let UbusMsgAttr::Status(0) = attr {
                         return Ok(());
-                    } else if let MessageAttr::Status(status) = attr {
+                    } else if let UbusMsgAttr::Status(status) = attr {
                         return Err(Error::Status(status));
                     }
                 }
                 return Err(Error::InvalidData("Invalid status message"));
             }
 
-            if message.header.message != MessageType::DATA {
+            if message.header.message != UbusMsgType::DATA {
                 continue;
             }
 
@@ -172,10 +174,10 @@ impl<T: IO> Connection<T> {
             let mut obj_type: Option<u32> = None;
             for attr in attrs {
                 match attr {
-                    MessageAttr::ObjPath(path) => obj_path = Some(path),
-                    MessageAttr::ObjId(id) => obj_id = Some(id),
-                    MessageAttr::ObjType(ty) => obj_type = Some(ty),
-                    MessageAttr::Signature(nested) => {
+                    UbusMsgAttr::ObjPath(path) => obj_path = Some(path),
+                    UbusMsgAttr::ObjId(id) => obj_id = Some(id),
+                    UbusMsgAttr::ObjType(ty) => obj_type = Some(ty),
+                    UbusMsgAttr::Signature(nested) => {
                         let object = ObjectResult {
                             path: obj_path.unwrap(),
                             id: obj_id.unwrap(),

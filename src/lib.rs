@@ -134,14 +134,14 @@ pub trait IO {
 }
 
 #[cfg(not(no_std))]
-mod stdio;
+mod usock;
 
 mod blob;
 mod blobmsg;
 mod connection;
-mod message;
+mod ubusmsg;
 
 pub use blob::*;
 pub use blobmsg::*;
 pub use connection::*;
-pub use message::*;
+pub use ubusmsg::*;

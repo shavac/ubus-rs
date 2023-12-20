@@ -21,6 +21,7 @@ fn test() {
 
     connection
         .lookup(
+            "",
             |obj| {
                 println!("\n{:?}", obj);
             },

@@ -16,7 +16,7 @@ fn main() {
     };
     connection
         .lookup(
-            "network.interface.lan",
+            "system",
             |obj| {
                 println!("\n{:?}", obj);
             },
@@ -32,6 +32,7 @@ fn main() {
 
     let obj_id = connection.lookup_id("network.interface.lan").unwrap();
     let mut addressv4 = Ipv4Addr::UNSPECIFIED;
+    
     connection.invoke(obj_id, "status", &[], |bi| {
         for x in bi {
             if x.name == Some("ipv4-address"){

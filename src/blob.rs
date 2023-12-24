@@ -1,8 +1,12 @@
+use crate::{BlobMsg, BlobMsgData, BlobMsgType};
+
 use super::Error;
 use core::convert::{TryFrom, TryInto};
 use core::marker::PhantomData;
 use core::mem::{align_of, size_of, transmute};
 use core::str;
+use std::collections::HashMap;
+use std::vec::Vec;
 use storage_endian::BEu32;
 
 #[repr(transparent)]
@@ -220,6 +224,26 @@ impl<'a> TryInto<&'a str> for Blob<'a> {
         str::from_utf8(data).map_err(|_| Error::InvalidData("Blob not valid UTF-8"))
     }
 }
+impl<'a> TryInto<Vec<BlobMsg<'a>>> for Blob<'a> {
+    type Error = Error;
+    fn try_into(self) -> Result<Vec<BlobMsg<'a>>, Error> {
+        let list: Vec<BlobMsg> = BlobIter::new(self.data).collect();
+        Ok(list)
+    }
+}
+
+impl<'a> TryInto<HashMap<&'a str, BlobMsgData<'a>>> for Blob<'a> {
+    type Error = Error;
+    fn try_into(self) -> Result<HashMap<&'a str, BlobMsgData<'a>>, Error> {
+        let mut map = HashMap::<&str, BlobMsgData>::new();
+        let iter = BlobIter::<BlobMsg>::new(self.data);
+        for item in iter {
+            map.insert(item.name.unwrap_or_default(), item.data);
+        }
+        Ok(map)
+    }
+}
+
 impl<'a> Into<&'a [u8]> for Blob<'a> {
     fn into(self) -> &'a [u8] {
         self.data
@@ -243,6 +267,7 @@ impl<'a, T> BlobIter<'a, T> {
         }
     }
 }
+
 impl<'a, T: TryFrom<Blob<'a>>> Iterator for BlobIter<'a, T> {
     type Item = T;
     fn next(&mut self) -> Option<Self::Item> {

@@ -1,3 +1,6 @@
+use core::convert::TryInto;
+use std::{collections::HashMap, println};
+
 use crate::*;
 
 #[derive(Copy, Clone)]
@@ -15,7 +18,8 @@ impl core::fmt::Debug for ObjectResult<'_> {
 pub struct SignatureResult<'a> {
     pub object: ObjectResult<'a>,
     pub name: &'a str,
-    pub args: &'a mut dyn Iterator<Item = (&'a str, BlobMsgType)>,
+    //pub args: &'a mut dyn Iterator<Item = (&'a str, BlobMsgType)>,
+    pub args: HashMap<&'a str, BlobMsgType>,
 }
 
 pub struct Connection<T: IO> {
@@ -63,7 +67,7 @@ impl<T: IO> Connection<T> {
         &mut self,
         obj: u32,
         method: &str,
-        args: &[BlobMsgData],
+        args: Option<&BlobMsgData>,
         mut on_result: impl FnMut(BlobIter<BlobMsg>),
     ) -> Result<(), Error<T::Error>> {
         self.sequence += 1;
@@ -83,8 +87,16 @@ impl<T: IO> Connection<T> {
 
         message.put(UbusMsgAttr::ObjId(obj))?;
         message.put(UbusMsgAttr::Method(method))?;
-        message.put(UbusMsgAttr::Data(&[]))?;
-
+        if let Some(args) = args {
+            let data = BlobMsg{
+                 name: Some("data"),
+                data: todo!(),
+                 //data: *args,
+            };
+            //message.put(UbusMsgAttr::Data(data.into()))?;
+        } else {
+            message.put(UbusMsgAttr::Data(&[]))?;
+        }
         self.send(message)?;
         'message: loop {
             let message = self.next_message()?;
@@ -190,14 +202,17 @@ impl<T: IO> Connection<T> {
                                 on_signature(SignatureResult {
                                     object,
                                     name: signature.name.unwrap(),
-                                    args: &mut table.map(|arg| {
-                                        if let BlobMsgData::Int32(typeid) = arg.data {
-                                            (arg.name.unwrap(), BlobMsgType::from(typeid as u32))
-                                        } else {
-                                            panic!()
-                                        }
-                                    }),
-                                });
+                                    args: table
+                                        .iter()
+                                        .map(|(k, v)| {
+                                            if let BlobMsgData::Int32(typeid) = *v {
+                                                (*k, BlobMsgType::from(typeid as u32))
+                                            } else {
+                                                panic!()
+                                            }
+                                        })
+                                        .collect(),
+                                })
                             }
                         }
                     }
@@ -207,18 +222,9 @@ impl<T: IO> Connection<T> {
         }
     }
 
-    pub fn lookup_id(
-        &mut self,
-        obj_path: &str,
-    ) -> Result<u32, Error<T::Error>> {
+    pub fn lookup_id(&mut self, obj_path: &str) -> Result<u32, Error<T::Error>> {
         let mut obj_id = 0u32;
-        self.lookup(
-            obj_path,
-            |obj|{
-                obj_id = obj.id
-            },
-            |_|{},
-        )?;
+        self.lookup(obj_path, |obj| obj_id = obj.id, |_| {})?;
         Ok(obj_id)
     }
 }

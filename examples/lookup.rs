@@ -1,8 +1,9 @@
-use std::{path::Path, convert::TryInto};
+use std::{collections::HashMap, path::Path, str::FromStr};
 
-use ubus::{BlobMsgData, BlobMsg};
-
+use jsonpath_rust::JsonPathFinder;
+use serde_json::{json, Value};
 use std::net::Ipv4Addr;
+use ubus::BlobMsgData;
 
 fn main() {
     let socket = Path::new("/var/run/ubus/ubus.sock");
@@ -21,44 +22,37 @@ fn main() {
                 println!("\n{:?}", obj);
             },
             |sig| {
-                print!("  {}(", sig.name);
-                for (name, ty) in sig.args {
-                    print!("{}: {:?}, ", name, ty);
-                }
-                std::println!(")");
+                println!("  {}({:?})", sig.name, sig.args);
             },
         )
         .unwrap();
 
     let obj_id = connection.lookup_id("network.interface.lan").unwrap();
-    let mut addressv4 = Ipv4Addr::UNSPECIFIED;
-    
-    connection.invoke(obj_id, "status", &[], |bi| {
-        for x in bi {
-            if x.name == Some("ipv4-address"){
-                //println!("{:?}: {:?}", x.name.unwrap(), x.data);
-                match x.data {
-                    BlobMsgData::Array(addr_list) => {
-                        for addr in addr_list {
-                            if let BlobMsgData::Table(addr_table) = addr.data {
-                                for in_addr in addr_table {
-                                    match in_addr.name {
-                                        Some("address") => if let BlobMsgData::String(addr_str) = in_addr.data {
-                                            addressv4 = addr_str.parse().unwrap();
-                                        },
-                                        //Some("mask") => println!("mask: {:?}", in_addr.data),
-                                        None => (),
-                                        _ => (),
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    _ => ()
+    let argv = BlobMsgData::String("eth0");
+    let args = HashMap::from([("name", argv)]);
+    let args = BlobMsgData::Table(args);
+    connection
+        .invoke(obj_id, "status", None, |bi| {
+            let mut json_output = "{\n".to_string();
+            let mut first = true;
+            for x in bi {
+                if !first {
+                    json_output += ",\n";
                 }
+                json_output += &format!("{}", x);
+                first = false;
             }
-        }
-    }).unwrap();
-    println!("{:X}", obj_id);
-    println!("{:?}", addressv4);
+            json_output += "\n}";
+            let json: Value = serde_json::from_str(&json_output).unwrap();
+            println!("{}", serde_json::to_string_pretty(&json).unwrap());
+            //let path = JsonPath::parse("$.ipv4-address[*].address").unwrap();
+            let finder =
+                JsonPathFinder::from_str(&json_output, "$.ipv4-address[*].address").unwrap();
+            for addr in finder.find_slice() {
+                let addr = addr.to_data().to_string();
+                println!("{}", addr);
+            }
+        })
+        .unwrap();
+    //println!("{:X}", obj_id);
 }

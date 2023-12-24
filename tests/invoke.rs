@@ -20,7 +20,7 @@ fn test() {
     let mut connection = Connection::new(client).unwrap();
 
     connection
-        .invoke(0x13333337, "info", &[], |x| {
+        .invoke(0x13333337, "info", None, |x| {
             for i in x {
                 std::dbg!(i);
             }

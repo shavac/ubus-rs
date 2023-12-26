@@ -1,6 +1,7 @@
-use crate::{Blob, BlobBuilder, BlobIter, BlobMsg, BlobTag, Error, IO};
+use crate::{Blob, BlobBuilder, BlobIter, BlobMsgPayload, BlobTag, Payload, Error, IO};
 use core::convert::TryInto;
 use core::mem::{size_of, transmute};
+use std::collections::HashMap;
 use storage_endian::{BEu16, BEu32};
 
 values!(pub UbusMsgVersion(u8) {
@@ -43,7 +44,7 @@ values!(pub UbusMsgAttrId(u32) {
 #[repr(C)]
 pub struct UbusMsgHeader {
     pub version: UbusMsgVersion,
-    pub message: UbusMsgType,
+    pub cmd_type: UbusMsgType,
     pub sequence: BEu16,
     pub peer: BEu32,
 }
@@ -100,7 +101,7 @@ impl core::fmt::Debug for UbusMsg<'_> {
         write!(
             f,
             "Message({:?} seq={} peer={:08x}, size={})",
-            self.header.message,
+            self.header.cmd_type,
             self.header.sequence,
             self.header.peer,
             self.blob.data.len()
@@ -114,7 +115,7 @@ pub struct UbusMsgBuilder<'a> {
 }
 
 impl<'a> UbusMsgBuilder<'a> {
-    pub fn new(buffer: &'a mut [u8], header: UbusMsgHeader) -> Result<Self, Error> {
+    pub fn new(buffer: &'a mut [u8], header: &UbusMsgHeader) -> Result<Self, Error> {
         valid_data!(
             buffer.len() >= (UbusMsgHeader::SIZE + BlobTag::SIZE),
             "Builder buffer is too small"
@@ -160,7 +161,6 @@ impl<'a> UbusMsgBuilder<'a> {
         let tag_buf = &mut self.buffer[UbusMsgHeader::SIZE..UbusMsgHeader::SIZE + BlobTag::SIZE];
         let tag_buf: &mut [u8; BlobTag::SIZE] = tag_buf.try_into().unwrap();
         *tag_buf = tag.to_bytes();
-
         &self.buffer[..self.offset]
     }
 }
@@ -177,7 +177,7 @@ pub enum UbusMsgAttr<'a> {
     ObjId(u32),
     Method(&'a str),
     ObjType(u32),
-    Signature(BlobIter<'a, BlobMsg<'a>>),
+    Signature(HashMap<&'a str,BlobMsgPayload<'a>>),
     Data(&'a [u8]),
     Target(u32),
     Active(bool),
@@ -190,20 +190,21 @@ pub enum UbusMsgAttr<'a> {
 
 impl<'a> From<Blob<'a>> for UbusMsgAttr<'a> {
     fn from(blob: Blob<'a>) -> Self {
+        let payload = Payload(blob.data);
         match blob.tag.id().into() {
-            UbusMsgAttrId::STATUS => UbusMsgAttr::Status(blob.try_into().unwrap()),
-            UbusMsgAttrId::OBJPATH => UbusMsgAttr::ObjPath(blob.try_into().unwrap()),
-            UbusMsgAttrId::OBJID => UbusMsgAttr::ObjId(blob.try_into().unwrap()),
-            UbusMsgAttrId::METHOD => UbusMsgAttr::Method(blob.try_into().unwrap()),
-            UbusMsgAttrId::OBJTYPE => UbusMsgAttr::ObjType(blob.try_into().unwrap()),
-            UbusMsgAttrId::SIGNATURE => UbusMsgAttr::Signature(blob.try_into().unwrap()),
-            UbusMsgAttrId::DATA => UbusMsgAttr::Data(blob.try_into().unwrap()),
-            UbusMsgAttrId::TARGET => UbusMsgAttr::Target(blob.try_into().unwrap()),
-            UbusMsgAttrId::ACTIVE => UbusMsgAttr::Active(blob.try_into().unwrap()),
-            UbusMsgAttrId::NO_REPLY => UbusMsgAttr::NoReply(blob.try_into().unwrap()),
-            UbusMsgAttrId::SUBSCRIBERS => UbusMsgAttr::Subscribers(blob.try_into().unwrap()),
-            UbusMsgAttrId::USER => UbusMsgAttr::User(blob.try_into().unwrap()),
-            UbusMsgAttrId::GROUP => UbusMsgAttr::Group(blob.try_into().unwrap()),
+            UbusMsgAttrId::STATUS => UbusMsgAttr::Status(payload.try_into().unwrap()),
+            UbusMsgAttrId::OBJPATH => UbusMsgAttr::ObjPath(payload.try_into().unwrap()),
+            UbusMsgAttrId::OBJID => UbusMsgAttr::ObjId(payload.try_into().unwrap()),
+            UbusMsgAttrId::METHOD => UbusMsgAttr::Method(payload.try_into().unwrap()),
+            UbusMsgAttrId::OBJTYPE => UbusMsgAttr::ObjType(payload.try_into().unwrap()),
+            UbusMsgAttrId::SIGNATURE => UbusMsgAttr::Signature(payload.try_into().unwrap()),
+            UbusMsgAttrId::DATA => UbusMsgAttr::Data(payload.try_into().unwrap()),
+            UbusMsgAttrId::TARGET => UbusMsgAttr::Target(payload.try_into().unwrap()),
+            UbusMsgAttrId::ACTIVE => UbusMsgAttr::Active(payload.try_into().unwrap()),
+            UbusMsgAttrId::NO_REPLY => UbusMsgAttr::NoReply(payload.try_into().unwrap()),
+            UbusMsgAttrId::SUBSCRIBERS => UbusMsgAttr::Subscribers(payload.try_into().unwrap()),
+            UbusMsgAttrId::USER => UbusMsgAttr::User(payload.try_into().unwrap()),
+            UbusMsgAttrId::GROUP => UbusMsgAttr::Group(payload.try_into().unwrap()),
             id => UbusMsgAttr::Unknown(id, blob.data),
         }
     }

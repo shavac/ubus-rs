@@ -1,4 +1,4 @@
-use crate::{BlobMsg, BlobMsgData, BlobMsgType};
+use crate::{BlobMsg, BlobMsgPayload, BlobMsgType};
 
 use super::Error;
 use core::convert::{TryFrom, TryInto};
@@ -6,6 +6,7 @@ use core::marker::PhantomData;
 use core::mem::{align_of, size_of, transmute};
 use core::str;
 use std::collections::HashMap;
+use std::println;
 use std::vec::Vec;
 use storage_endian::BEu32;
 
@@ -138,7 +139,7 @@ impl<'a> BlobBuilder<'a> {
 pub struct Blob<'a> {
     pub tag: BlobTag,
     pub data: &'a [u8],
-    pub name: Option<&'a str>,
+    //pub name: Option<&'a str>,
 }
 
 impl<'a> Blob<'a> {
@@ -147,10 +148,8 @@ impl<'a> Blob<'a> {
         // Read the blob's tag
         let (tag, data) = data.split_at(BlobTag::SIZE);
         let tag = BlobTag::from_bytes(tag.try_into().unwrap());
-
         Self::from_tag_and_data(tag, data)
     }
-
     pub fn from_tag_and_data(tag: BlobTag, data: &'a [u8]) -> Result<Self, Error> {
         tag.is_valid()?;
         valid_data!(data.len() >= tag.inner_len(), "Blob too short");
@@ -158,45 +157,53 @@ impl<'a> Blob<'a> {
         // Restrict data to payload size
         let data = &data[..tag.inner_len()];
 
-        if tag.is_extended() {
-            // Extended blobs have a name at the beginning
-            // Get the string length
-            let (len_bytes, data) = data.split_at(size_of::<u16>());
-            let ext_len = u16::from_be_bytes(len_bytes.try_into().unwrap()) as usize;
-            // Get the string
-            let (ext_bytes, data) = data.split_at(ext_len);
-            let name = str::from_utf8(ext_bytes).unwrap();
-            // Get the nul terminator (implicit)
-            let ext_len = ext_len + 1;
-            let (terminator, data) = data.split_at(1);
-            valid_data!(terminator[0] == b'\0', "No extended name nul terminator");
-            // Ensure the rest of the payload is aligned
-            let ext_total = size_of::<u16>() + ext_len;
-            let padding = BlobTag::ALIGNMENT.wrapping_sub(ext_total) & (BlobTag::ALIGNMENT - 1);
-            let data = &data[padding..];
-            Ok(Blob {
-                tag,
-                data,
-                name: Some(name),
-            })
-        } else {
-            Ok(Blob {
-                tag,
-                data,
-                name: None,
-            })
-        }
+        Ok(Blob { tag, data })
     }
 }
 
-macro_rules! try_into_number {
-    ( $( $ty:ty , )* ) => { $( try_into_number!($ty); )* };
+impl<'a> TryInto<BlobMsg<'a>> for Blob<'a> {
+    type Error = Error;
+    fn try_into(self) -> Result<BlobMsg<'a>, Self::Error> {
+        if !self.tag.is_extended() {
+            return Err(Error::InvalidData("Not a extended blob"));
+        }
+        let (len_bytes, data) = self.data.split_at(size_of::<u16>());
+        let name_len = u16::from_be_bytes(len_bytes.try_into().unwrap()) as usize;
+        // Get the string
+        let (name_bytes, data) = data.split_at(name_len);
+        let name = str::from_utf8(name_bytes).unwrap();
+        // Get the nul terminator (implicit)
+        let name_len = name_len + 1;
+        let (terminator, data) = data.split_at(1);
+        valid_data!(terminator[0] == b'\0', "No extended name nul terminator");
+        // Ensure the rest of the payload is aligned
+        let name_total_len = size_of::<u16>() + name_len;
+        let padding = BlobTag::ALIGNMENT.wrapping_sub(name_total_len) & (BlobTag::ALIGNMENT - 1);
+        let payload = Payload(&data[padding..]);
+        let data = match self.tag.id().into() {
+            BlobMsgType::ARRAY => BlobMsgPayload::Array(payload.try_into()?),
+            BlobMsgType::TABLE => BlobMsgPayload::Table(payload.try_into()?),
+            BlobMsgType::STRING => BlobMsgPayload::String(payload.try_into()?),
+            BlobMsgType::INT64 => BlobMsgPayload::Int64(payload.try_into()?),
+            BlobMsgType::INT32 => BlobMsgPayload::Int32(payload.try_into()?),
+            BlobMsgType::INT16 => BlobMsgPayload::Int16(payload.try_into()?),
+            BlobMsgType::INT8 => BlobMsgPayload::Int8(payload.try_into()?),
+            id => BlobMsgPayload::Unknown(id.value(), payload.0),
+        };
+        let name = Some(name);
+        Ok(BlobMsg { name, data })
+    }
+}
+
+pub struct Payload<'a>(pub &'a [u8]);
+macro_rules! payload_try_into_number {
+    ( $( $ty:ty , )* ) => { $( payload_try_into_number!($ty); )* };
     ( $ty:ty ) => {
-        impl TryInto<$ty> for Blob<'_> {
+        impl TryInto<$ty> for Payload<'_> {
             type Error = Error;
             fn try_into(self) -> Result<$ty, Self::Error> {
                 let size = size_of::<$ty>();
-                if let Ok(bytes) = self.data[..size].try_into() {
+                if let Ok(bytes) = self.0[..size].try_into() {
                     Ok(<$ty>::from_be_bytes(bytes))
                 } else {
                     Err(Error::InvalidData(stringify!("Blob wrong size for " $ty)))
@@ -205,48 +212,54 @@ macro_rules! try_into_number {
         }
     };
 }
-try_into_number!(u8, i8, u16, i16, u32, i32, u64, i64, f64,);
-impl<'a> TryInto<bool> for Blob<'a> {
+payload_try_into_number!(u8, i8, u16, i16, u32, i32, u64, i64, f64,);
+impl<'a> TryInto<bool> for Payload<'a> {
     type Error = Error;
     fn try_into(self) -> Result<bool, Self::Error> {
-        let value: u8 = self.try_into()?;
+        let value: u8 = self.0[0];
         Ok(value != 0)
     }
 }
-impl<'a> TryInto<&'a str> for Blob<'a> {
+
+impl<'a> TryInto<&'a str> for Payload<'a> {
     type Error = Error;
     fn try_into(self) -> Result<&'a str, Self::Error> {
-        let data = if self.data.last() == Some(&b'\0') {
-            &self.data[..self.data.len() - 1]
+        let data = if self.0.last() == Some(&b'\0') {
+            &self.0[..self.0.len() - 1]
         } else {
-            self.data
+            self.0
         };
         str::from_utf8(data).map_err(|_| Error::InvalidData("Blob not valid UTF-8"))
     }
 }
-impl<'a> TryInto<Vec<BlobMsg<'a>>> for Blob<'a> {
+impl<'a> TryInto<Vec<BlobMsg<'a>>> for Payload<'a> {
     type Error = Error;
     fn try_into(self) -> Result<Vec<BlobMsg<'a>>, Error> {
-        let list: Vec<BlobMsg> = BlobIter::new(self.data).collect();
+        let iter = BlobIter::<Blob>::new(self.0);
+        let mut list = Vec::new();
+        for item in iter {
+            list.push(item.try_into()?);
+        }
         Ok(list)
     }
 }
 
-impl<'a> TryInto<HashMap<&'a str, BlobMsgData<'a>>> for Blob<'a> {
+impl<'a> TryInto<HashMap<&'a str, BlobMsgPayload<'a>>> for Payload<'a> {
     type Error = Error;
-    fn try_into(self) -> Result<HashMap<&'a str, BlobMsgData<'a>>, Error> {
-        let mut map = HashMap::<&str, BlobMsgData>::new();
-        let iter = BlobIter::<BlobMsg>::new(self.data);
+    fn try_into(self) -> Result<HashMap<&'a str, BlobMsgPayload<'a>>, Error> {
+        let mut map = HashMap::<&str, BlobMsgPayload>::new();
+        let iter = BlobIter::<Blob>::new(self.0);
         for item in iter {
+            let item: BlobMsg = item.try_into()?;
             map.insert(item.name.unwrap_or_default(), item.data);
         }
         Ok(map)
     }
 }
 
-impl<'a> Into<&'a [u8]> for Blob<'a> {
+impl<'a> Into<&'a [u8]> for Payload<'a> {
     fn into(self) -> &'a [u8] {
-        self.data
+        self.0
     }
 }
 impl<'a, T> Into<BlobIter<'a, T>> for Blob<'a> {
@@ -254,6 +267,13 @@ impl<'a, T> Into<BlobIter<'a, T>> for Blob<'a> {
         BlobIter::new(self.data)
     }
 }
+
+impl<'a, T> Into<BlobIter<'a, T>> for Payload<'a> {
+    fn into(self) -> BlobIter<'a, T> {
+        BlobIter::new(self.0)
+    }
+}
+
 
 pub struct BlobIter<'a, T> {
     data: &'a [u8],
@@ -284,6 +304,7 @@ impl<'a, T: TryFrom<Blob<'a>>> Iterator for BlobIter<'a, T> {
         None
     }
 }
+
 impl<T> core::fmt::Debug for BlobIter<'_, T> {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         write!(f, "BlobIter")

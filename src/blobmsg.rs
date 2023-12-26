@@ -1,11 +1,11 @@
+use crate::{BlobTag};
+
 use super::{Blob, Error};
 use core::convert::{TryFrom, TryInto};
 use core::str;
-use serde::ser::SerializeStruct;
-use serde::{Deserialize, Serialize, Serializer};
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::fmt;
-use std::format;
 use std::vec::Vec;
 
 values!(pub BlobMsgType(u32) {
@@ -16,59 +16,55 @@ values!(pub BlobMsgType(u32) {
     INT64  = 4,
     INT32  = 5,
     INT16  = 6,
+    BOOL   = 7,
     INT8   = 7,
     DOUBLE = 8,
 });
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(untagged)]
-pub enum BlobMsgData<'a> {
+pub enum BlobMsgPayload<'a> {
     Array(Vec<BlobMsg<'a>>),
-    Table(HashMap<&'a str, BlobMsgData<'a>>),
+    Table(HashMap<&'a str, BlobMsgPayload<'a>>),
     String(&'a str),
     Int64(i64),
     Int32(i32),
     Int16(i16),
     Int8(i8),
+    Bool(i8),
     Double(f64),
     Unknown(u32, &'a [u8]),
 }
 
-impl fmt::Display for BlobMsgData<'_> {
+impl fmt::Display for BlobMsgPayload<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            BlobMsgData::Array(list) => write!(f, "{}", List(list)),
-            BlobMsgData::Table(dict) => write!(f, "{}", Dict(dict)),
-            BlobMsgData::String(s) => write!(f, "\"{}\"", s),
-            BlobMsgData::Int64(num) => write!(f, "{}", num),
-            BlobMsgData::Int32(num) => write!(f, "{}", num),
-            BlobMsgData::Int16(num) => write!(f, "{}", num),
-            BlobMsgData::Double(num) => write!(f, "{}", num),
-            BlobMsgData::Int8(num) => write!(f, "{}", *num == 1),
-            BlobMsgData::Unknown(typeid, bytes) => {
-                write!(f, "Unknown: type={} data={:?}", typeid, bytes)
+            BlobMsgPayload::Array(list) => write!(f, "{}", List(list)),
+            BlobMsgPayload::Table(dict) => write!(f, "{}", Dict(dict)),
+            BlobMsgPayload::String(s) => write!(f, "\"{}\"", s),
+            BlobMsgPayload::Int64(num) => write!(f, "{}", num),
+            BlobMsgPayload::Int32(num) => write!(f, "{}", num),
+            BlobMsgPayload::Int16(num) => write!(f, "{}", num),
+            BlobMsgPayload::Int8(num) => write!(f, "{}", num),
+            BlobMsgPayload::Bool(num) => write!(f, "{}", *num == 1),
+            BlobMsgPayload::Double(num) => write!(f, "{}", num),
+            BlobMsgPayload::Unknown(typeid, bytes) => {
+                write!(f, "\"type={} data={:?}\"", typeid, bytes)
             }
         }
     }
 }
 
-/* impl fmt::Display for Vec<BlobMsg<'_>> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let formatted = self.iter().map(|x| format!("{}", x)).iterspace(",").collect();
-        write!(f, "[{}]", formatted)
-    }
-}
- */
 struct List<'a>(&'a Vec<BlobMsg<'a>>);
 impl<'a> fmt::Display for List<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "[")?;
         let mut first = true;
         for msg in self.0 {
-            if first {
-                first = false;
-            } else {
+            if !first {
                 write!(f, ", ")?;
+            } else {
+                first = false;
             }
             write!(f, "{}", msg)?; // Use the Display implementation of BlobMsg
         }
@@ -77,7 +73,7 @@ impl<'a> fmt::Display for List<'a> {
     }
 }
 
-struct Dict<'a>(&'a HashMap<&'a str, BlobMsgData<'a>>);
+struct Dict<'a>(&'a HashMap<&'a str, BlobMsgPayload<'a>>);
 impl<'a> fmt::Display for Dict<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{{")?;
@@ -88,52 +84,38 @@ impl<'a> fmt::Display for Dict<'a> {
             } else {
                 write!(f, ", ")?;
             }
-            write!(f, "\"{}\": {}", k, v)?; // Use the Display implementation of BlobMsg
+            write!(f, "\"{}\": {}", k, v)?;
         }
         write!(f, "}}")?;
         Ok(())
     }
 }
 
-#[derive(Debug, Deserialize)]
-//#[serde(serialize_with = "serialize_key_and_value")]
+#[derive(Debug, Deserialize, Clone)]
 pub struct BlobMsg<'a> {
     pub name: Option<&'a str>,
-    pub data: BlobMsgData<'a>,
+    pub data: BlobMsgPayload<'a>,
 }
 
-/* impl<'a> Serialize for BlobMsg<'a> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let key = self.name.unwrap_or_default();
-        let value = format!("{:?}", self.data);
-        let mut s = serializer.serialize_struct("", 1)?;
-        s.serialize_field(key, value.as_str().clone())?;
-        s.end()
-    }
-}
- */
-impl<'a> TryFrom<Blob<'a>> for BlobMsg<'a> {
+/* impl<'a> TryFrom<Blob<'a>> for BlobMsg<'a> {
     type Error = Error;
     fn try_from(blob: Blob<'a>) -> Result<Self, Self::Error> {
         let data = match blob.tag.id().into() {
-            BlobMsgType::ARRAY => BlobMsgData::Array(blob.try_into()?),
-            BlobMsgType::TABLE => BlobMsgData::Table(blob.try_into()?),
-            BlobMsgType::STRING => BlobMsgData::String(blob.try_into()?),
-            BlobMsgType::INT64 => BlobMsgData::Int64(blob.try_into()?),
-            BlobMsgType::INT32 => BlobMsgData::Int32(blob.try_into()?),
-            BlobMsgType::INT16 => BlobMsgData::Int16(blob.try_into()?),
-            BlobMsgType::INT8 => BlobMsgData::Int8(blob.try_into()?),
-            id => BlobMsgData::Unknown(id.value(), blob.data),
+            BlobMsgType::ARRAY => BlobMsgPayload::Array(blob.try_into()?),
+            BlobMsgType::TABLE => BlobMsgPayload::Table(blob.try_into()?),
+            BlobMsgType::STRING => BlobMsgPayload::String(blob.try_into()?),
+            BlobMsgType::INT64 => BlobMsgPayload::Int64(blob.try_into()?),
+            BlobMsgType::INT32 => BlobMsgPayload::Int32(blob.try_into()?),
+            BlobMsgType::INT16 => BlobMsgPayload::Int16(blob.try_into()?),
+            BlobMsgType::INT8 => BlobMsgPayload::Int8(blob.try_into()?),
+            id => BlobMsgPayload::Unknown(id.value(), blob.payload),
         };
         Ok(BlobMsg {
             name: blob.name,
             data,
         })
     }
-}
+} */
 
 impl fmt::Display for BlobMsg<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -143,30 +125,5 @@ impl fmt::Display for BlobMsg<'_> {
         } else {
             write!(f, "{}", self.data)
         }
-    }
-}
-
-impl Serialize for BlobMsgData<'_> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut s = serializer.serialize_struct("BlobMsgData", 1)?;
-        s.serialize_field("name", &self)?;
-        s.end()
-    }
-}
-
-impl<'de> Serialize for BlobMsg<'de> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut s = serializer.serialize_struct("BlobMsg", 2)?;
-        let name = self.name.unwrap_or_default();
-        /*                  let data = self.data;
-        let value = format!("{:?}", data).as_str().clone(); */
-        s.serialize_field("abc", &self.data)?;
-        s.end()
     }
 }

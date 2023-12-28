@@ -22,9 +22,7 @@ fn main() {
         }
     };
     let obj_id = connection.lookup_id(obj_path).unwrap();
-    let argv = BlobMsgPayload::String("eth0");
-    let args = BlobMsgPayload::Table(HashMap::from([("name", argv)]));
-    let args = Some(&args);
+    let args = vec![BlobMsg{name: "name", data:BlobMsgPayload::String("eth0")}];
     connection
         .invoke(obj_id, method, args, |bi| {
             let mut json_output = "{\n".to_string();

@@ -2,6 +2,7 @@ use crate::*;
 use core::convert::{TryFrom, TryInto};
 use core::panic;
 use std::collections::HashMap;
+use std::vec::Vec;
 
 #[derive(Copy, Clone)]
 pub struct ObjectResult<'a> {
@@ -89,7 +90,7 @@ impl<T: IO> Connection<T> {
         &mut self,
         obj: u32,
         method: &str,
-        args: Option<&BlobMsgPayload>,
+        args: Vec<BlobMsg>,
         mut on_result: impl FnMut(BlobIter<Blob>),
     ) -> Result<(), Error<T::Error>> {
         let mut buffer = [0u8; 1024];
@@ -97,18 +98,13 @@ impl<T: IO> Connection<T> {
         let mut message = UbusMsgBuilder::new(&mut buffer, &header).unwrap();
         message.put(UbusMsgAttr::ObjId(obj))?;
         message.put(UbusMsgAttr::Method(method))?;
-        if let Some(args) = args {
-            let blobmsg = BlobMsg {
-                name: "name",
-                data: BlobMsgPayload::String("eth0"),
-            };
-            let mut blob = BlobMsgBuilder::try_from(blobmsg)?;
-            //let blob = blob.build();
-            //let blobmsg: HashMap<&str, BlobMsgPayload> = Payload::from(blob.data).try_into()?;
-            message.put(UbusMsgAttr::Data(blob.data()))?;
-        } else {
-            message.put(UbusMsgAttr::Data(&[]))?;
+        let mut data = Vec::new();
+        for blobmsg in args {
+            let blob = BlobMsgBuilder::try_from(blobmsg)?;
+            data.extend_from_slice(blob.data());
         }
+        message.put(UbusMsgAttr::Data(&data))?;
+
         self.send(message)?;
         'message: loop {
             let message = self.next_message()?;

@@ -1,6 +1,6 @@
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
-use std::{print, println};
+use std::println;
 use ubus::*;
 
 #[test]
@@ -25,13 +25,13 @@ fn test() {
             |obj| {
                 println!("\n{:?}", obj);
             },
-            |sig| {
+/*             |sig| {
                 print!("  {}(", sig.name);
                 for (name, ty) in sig.args {
                     print!("{}: {:?}, ", name, ty);
                 }
                 std::println!(")");
-            },
+            }, */
         )
         .unwrap();
 }

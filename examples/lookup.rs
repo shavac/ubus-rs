@@ -1,7 +1,5 @@
 use std::{env, path::Path};
 
-use ubus::BlobMsgPayload;
-
 fn main() {
     let args: Vec<String> = env::args().collect();
     let mut obj_path = "";
@@ -17,7 +15,7 @@ fn main() {
             return;
         }
     };
-    connection
+/*     connection
         .lookup(
             obj_path,
             |obj| {
@@ -27,5 +25,13 @@ fn main() {
                 println!("  {}:{:?}", sig.name, sig.args);
             },
         )
-        .unwrap();
+        .unwrap(); */
+    connection
+    .lookup(
+        obj_path,
+        |obj| {
+            println!("{:?}", obj);
+        },
+    )
+    .unwrap();
 }

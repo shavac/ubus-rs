@@ -157,7 +157,7 @@ impl<'a> UbusMsgBuilder<'a> {
 
     pub fn finish(self) -> &'a [u8] {
         // Update tag with correct size
-        let tag = BlobTag::new(0, self.offset - UbusMsgHeader::SIZE).unwrap();
+        let tag = BlobTag::new(0, self.offset - UbusMsgHeader::SIZE, false).unwrap();
         let tag_buf = &mut self.buffer[UbusMsgHeader::SIZE..UbusMsgHeader::SIZE + BlobTag::SIZE];
         let tag_buf: &mut [u8; BlobTag::SIZE] = tag_buf.try_into().unwrap();
         *tag_buf = tag.to_bytes();
@@ -190,7 +190,7 @@ pub enum UbusMsgAttr<'a> {
 
 impl<'a> From<Blob<'a>> for UbusMsgAttr<'a> {
     fn from(blob: Blob<'a>) -> Self {
-        let payload = Payload(blob.data);
+        let payload = Payload::from(blob.data);
         match blob.tag.id().into() {
             UbusMsgAttrId::STATUS => UbusMsgAttr::Status(payload.try_into().unwrap()),
             UbusMsgAttrId::OBJPATH => UbusMsgAttr::ObjPath(payload.try_into().unwrap()),
@@ -205,7 +205,7 @@ impl<'a> From<Blob<'a>> for UbusMsgAttr<'a> {
             UbusMsgAttrId::SUBSCRIBERS => UbusMsgAttr::Subscribers(payload.try_into().unwrap()),
             UbusMsgAttrId::USER => UbusMsgAttr::User(payload.try_into().unwrap()),
             UbusMsgAttrId::GROUP => UbusMsgAttr::Group(payload.try_into().unwrap()),
-            id => UbusMsgAttr::Unknown(id, blob.data),
+            id => UbusMsgAttr::Unknown(id, blob.data.into()),
         }
     }
 }

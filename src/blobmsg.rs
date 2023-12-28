@@ -1,7 +1,3 @@
-use crate::{BlobTag};
-
-use super::{Blob, Error};
-use core::convert::{TryFrom, TryInto};
 use core::str;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -93,35 +89,14 @@ impl<'a> fmt::Display for Dict<'a> {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct BlobMsg<'a> {
-    pub name: Option<&'a str>,
+    pub name: &'a str,
     pub data: BlobMsgPayload<'a>,
 }
 
-/* impl<'a> TryFrom<Blob<'a>> for BlobMsg<'a> {
-    type Error = Error;
-    fn try_from(blob: Blob<'a>) -> Result<Self, Self::Error> {
-        let data = match blob.tag.id().into() {
-            BlobMsgType::ARRAY => BlobMsgPayload::Array(blob.try_into()?),
-            BlobMsgType::TABLE => BlobMsgPayload::Table(blob.try_into()?),
-            BlobMsgType::STRING => BlobMsgPayload::String(blob.try_into()?),
-            BlobMsgType::INT64 => BlobMsgPayload::Int64(blob.try_into()?),
-            BlobMsgType::INT32 => BlobMsgPayload::Int32(blob.try_into()?),
-            BlobMsgType::INT16 => BlobMsgPayload::Int16(blob.try_into()?),
-            BlobMsgType::INT8 => BlobMsgPayload::Int8(blob.try_into()?),
-            id => BlobMsgPayload::Unknown(id.value(), blob.payload),
-        };
-        Ok(BlobMsg {
-            name: blob.name,
-            data,
-        })
-    }
-} */
-
 impl fmt::Display for BlobMsg<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = self.name.unwrap_or_default();
-        if name.len() > 0 {
-            write!(f, "\"{}\": {}", name, self.data)
+        if self.name.len() > 0 {
+            write!(f, "\"{}\": {}", self.name, self.data)
         } else {
             write!(f, "{}", self.data)
         }

@@ -1,7 +1,8 @@
 use crate::*;
-use core::convert::{TryFrom, TryInto};
+use core::convert::TryFrom;
 use core::panic;
 use std::collections::HashMap;
+use std::println;
 use std::vec::Vec;
 
 #[derive(Copy, Clone)]
@@ -57,7 +58,7 @@ impl<T: IO> Connection<T> {
 
         // Verify the header is what we expect
         valid_data!(
-            message.header.cmd_type == UbusMsgType::HELLO,
+            message.header.cmd_type == UbusCmdType::HELLO,
             "Expected hello"
         );
 
@@ -67,7 +68,7 @@ impl<T: IO> Connection<T> {
         Ok(conn)
     }
 
-    fn header_by_obj_cmd(&mut self, obj_id: u32, cmd: UbusMsgType) -> UbusMsgHeader {
+    fn header_by_obj_cmd(&mut self, obj_id: u32, cmd: UbusCmdType) -> UbusMsgHeader {
         self.sequence += 1;
         UbusMsgHeader {
             version: UbusMsgVersion::CURRENT,
@@ -90,18 +91,21 @@ impl<T: IO> Connection<T> {
         &mut self,
         obj: u32,
         method: &str,
-        args: Vec<BlobMsg>,
+        args: Option<Vec<BlobMsg>>,
         mut on_result: impl FnMut(BlobIter<Blob>),
     ) -> Result<(), Error<T::Error>> {
         let mut buffer = [0u8; 1024];
-        let header = self.header_by_obj_cmd(obj, UbusMsgType::INVOKE);
+        let header = self.header_by_obj_cmd(obj, UbusCmdType::INVOKE);
         let mut message = UbusMsgBuilder::new(&mut buffer, &header).unwrap();
         message.put(UbusMsgAttr::ObjId(obj))?;
         message.put(UbusMsgAttr::Method(method))?;
         let mut data = Vec::new();
-        for blobmsg in args {
-            let blob = BlobMsgBuilder::try_from(blobmsg)?;
-            data.extend_from_slice(blob.data());
+        if let Some(args) = args {
+            for blobmsg in args {
+                let bb = BlobMsgBuilder::try_from(blobmsg)?;
+                println!("{:?}", bb.data());
+                data.extend_from_slice(bb.data());
+            }
         }
         message.put(UbusMsgAttr::Data(&data))?;
 
@@ -115,7 +119,7 @@ impl<T: IO> Connection<T> {
             let attrs = BlobIter::<UbusMsgAttr>::new(message.blob.data);
 
             match message.header.cmd_type {
-                UbusMsgType::STATUS => {
+                UbusCmdType::STATUS => {
                     for attr in attrs {
                         if let UbusMsgAttr::Status(0) = attr {
                             return Ok(());
@@ -125,7 +129,7 @@ impl<T: IO> Connection<T> {
                     }
                     return Err(Error::InvalidData("Invalid status message"));
                 }
-                UbusMsgType::DATA => {
+                UbusCmdType::DATA => {
                     for attr in attrs {
                         if let UbusMsgAttr::Data(data) = attr {
                             on_result(BlobIter::new(data));
@@ -148,7 +152,7 @@ impl<T: IO> Connection<T> {
         mut on_signature: impl FnMut(SignatureResult),
     ) -> Result<(), Error<T::Error>> {
         let mut buffer = [0u8; 1024];
-        let header = self.header_by_obj_cmd(0, UbusMsgType::LOOKUP);
+        let header = self.header_by_obj_cmd(0, UbusCmdType::LOOKUP);
         let mut request = UbusMsgBuilder::new(&mut buffer, &header).unwrap();
         if obj_path.len() != 0 {
             request.put(UbusMsgAttr::ObjPath(obj_path)).unwrap();
@@ -163,7 +167,7 @@ impl<T: IO> Connection<T> {
 
             let attrs = BlobIter::<UbusMsgAttr>::new(message.blob.data);
 
-            if message.header.cmd_type == UbusMsgType::STATUS {
+            if message.header.cmd_type == UbusCmdType::STATUS {
                 for attr in attrs {
                     if let UbusMsgAttr::Status(0) = attr {
                         return Ok(());
@@ -174,7 +178,7 @@ impl<T: IO> Connection<T> {
                 return Err(Error::InvalidData("Invalid status message"));
             }
 
-            if message.header.cmd_type != UbusMsgType::DATA {
+            if message.header.cmd_type != UbusCmdType::DATA {
                 continue;
             }
 
@@ -231,7 +235,7 @@ impl<T: IO> Connection<T> {
         mut on_object: impl FnMut(ObjectSignatures),
     ) -> Result<(), Error<T::Error>> {
         let mut buffer = [0u8; 1024];
-        let header = self.header_by_obj_cmd(0, UbusMsgType::LOOKUP);
+        let header = self.header_by_obj_cmd(0, UbusCmdType::LOOKUP);
         let mut request = UbusMsgBuilder::new(&mut buffer, &header).unwrap();
         if obj_path.len() != 0 {
             request.put(UbusMsgAttr::ObjPath(obj_path)).unwrap();
@@ -246,7 +250,7 @@ impl<T: IO> Connection<T> {
 
             let attrs = BlobIter::<UbusMsgAttr>::new(message.blob.data);
 
-            if message.header.cmd_type == UbusMsgType::STATUS {
+            if message.header.cmd_type == UbusCmdType::STATUS {
                 for attr in attrs {
                     if let UbusMsgAttr::Status(0) = attr {
                         return Ok(());
@@ -257,7 +261,7 @@ impl<T: IO> Connection<T> {
                 return Err(Error::InvalidData("Invalid status message"));
             }
 
-            if message.header.cmd_type != UbusMsgType::DATA {
+            if message.header.cmd_type != UbusCmdType::DATA {
                 continue;
             }
             let mut obj = ObjectSignatures::default();

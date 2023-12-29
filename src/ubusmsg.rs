@@ -8,7 +8,7 @@ values!(pub UbusMsgVersion(u8) {
     CURRENT = 0x00,
 });
 
-values!(pub UbusMsgType(u8) {
+values!(pub UbusCmdType(u8) {
     HELLO           = 0x00,
     STATUS          = 0x01,
     DATA            = 0x02,
@@ -23,7 +23,7 @@ values!(pub UbusMsgType(u8) {
     MONITOR         = 0x11,
 });
 
-values!(pub UbusMsgAttrId(u32) {
+values!(pub BlobAttrId(u32) {
     UNSPEC      = 0x00,
     STATUS      = 0x01,
     OBJPATH     = 0x02,
@@ -44,7 +44,7 @@ values!(pub UbusMsgAttrId(u32) {
 #[repr(C)]
 pub struct UbusMsgHeader {
     pub version: UbusMsgVersion,
-    pub cmd_type: UbusMsgType,
+    pub cmd_type: UbusCmdType,
     pub sequence: BEu16,
     pub peer: BEu32,
 }
@@ -134,19 +134,19 @@ impl<'a> UbusMsgBuilder<'a> {
         let mut blob = BlobBuilder::from_bytes(&mut self.buffer[self.offset..]);
 
         match attr {
-            UbusMsgAttr::Status(val) => blob.push_u32(UbusMsgAttrId::STATUS.value(), val as u32)?,
-            UbusMsgAttr::ObjPath(val) => blob.push_str(UbusMsgAttrId::OBJPATH.value(), val)?,
-            UbusMsgAttr::ObjId(val) => blob.push_u32(UbusMsgAttrId::OBJID.value(), val)?,
-            UbusMsgAttr::Method(val) => blob.push_str(UbusMsgAttrId::METHOD.value(), val)?,
-            UbusMsgAttr::ObjType(val) => blob.push_u32(UbusMsgAttrId::STATUS.value(), val)?,
+            UbusMsgAttr::Status(val) => blob.push_u32(BlobAttrId::STATUS.value(), val as u32)?,
+            UbusMsgAttr::ObjPath(val) => blob.push_str(BlobAttrId::OBJPATH.value(), val)?,
+            UbusMsgAttr::ObjId(val) => blob.push_u32(BlobAttrId::OBJID.value(), val)?,
+            UbusMsgAttr::Method(val) => blob.push_str(BlobAttrId::METHOD.value(), val)?,
+            UbusMsgAttr::ObjType(val) => blob.push_u32(BlobAttrId::STATUS.value(), val)?,
             UbusMsgAttr::Signature(_) => unimplemented!(),
-            UbusMsgAttr::Data(val) => blob.push_bytes(UbusMsgAttrId::DATA.value(), val)?,
-            UbusMsgAttr::Target(val) => blob.push_u32(UbusMsgAttrId::TARGET.value(), val)?,
-            UbusMsgAttr::Active(val) => blob.push_bool(UbusMsgAttrId::USER.value(), val)?,
-            UbusMsgAttr::NoReply(val) => blob.push_bool(UbusMsgAttrId::USER.value(), val)?,
+            UbusMsgAttr::Data(val) => blob.push_bytes(BlobAttrId::DATA.value(), val)?,
+            UbusMsgAttr::Target(val) => blob.push_u32(BlobAttrId::TARGET.value(), val)?,
+            UbusMsgAttr::Active(val) => blob.push_bool(BlobAttrId::USER.value(), val)?,
+            UbusMsgAttr::NoReply(val) => blob.push_bool(BlobAttrId::USER.value(), val)?,
             UbusMsgAttr::Subscribers(_) => unimplemented!(),
-            UbusMsgAttr::User(val) => blob.push_str(UbusMsgAttrId::USER.value(), val)?,
-            UbusMsgAttr::Group(val) => blob.push_str(UbusMsgAttrId::GROUP.value(), val)?,
+            UbusMsgAttr::User(val) => blob.push_str(BlobAttrId::USER.value(), val)?,
+            UbusMsgAttr::Group(val) => blob.push_str(BlobAttrId::GROUP.value(), val)?,
             UbusMsgAttr::Unknown(id, val) => blob.push_bytes(id.value(), val)?,
         };
 
@@ -185,26 +185,26 @@ pub enum UbusMsgAttr<'a> {
     Subscribers(BlobIter<'a, Blob<'a>>),
     User(&'a str),
     Group(&'a str),
-    Unknown(UbusMsgAttrId, &'a [u8]),
+    Unknown(BlobAttrId, &'a [u8]),
 }
 
 impl<'a> From<Blob<'a>> for UbusMsgAttr<'a> {
     fn from(blob: Blob<'a>) -> Self {
         let payload = Payload::from(blob.data);
         match blob.tag.id().into() {
-            UbusMsgAttrId::STATUS => UbusMsgAttr::Status(payload.try_into().unwrap()),
-            UbusMsgAttrId::OBJPATH => UbusMsgAttr::ObjPath(payload.try_into().unwrap()),
-            UbusMsgAttrId::OBJID => UbusMsgAttr::ObjId(payload.try_into().unwrap()),
-            UbusMsgAttrId::METHOD => UbusMsgAttr::Method(payload.try_into().unwrap()),
-            UbusMsgAttrId::OBJTYPE => UbusMsgAttr::ObjType(payload.try_into().unwrap()),
-            UbusMsgAttrId::SIGNATURE => UbusMsgAttr::Signature(payload.try_into().unwrap()),
-            UbusMsgAttrId::DATA => UbusMsgAttr::Data(payload.try_into().unwrap()),
-            UbusMsgAttrId::TARGET => UbusMsgAttr::Target(payload.try_into().unwrap()),
-            UbusMsgAttrId::ACTIVE => UbusMsgAttr::Active(payload.try_into().unwrap()),
-            UbusMsgAttrId::NO_REPLY => UbusMsgAttr::NoReply(payload.try_into().unwrap()),
-            UbusMsgAttrId::SUBSCRIBERS => UbusMsgAttr::Subscribers(payload.try_into().unwrap()),
-            UbusMsgAttrId::USER => UbusMsgAttr::User(payload.try_into().unwrap()),
-            UbusMsgAttrId::GROUP => UbusMsgAttr::Group(payload.try_into().unwrap()),
+            BlobAttrId::STATUS => UbusMsgAttr::Status(payload.try_into().unwrap()),
+            BlobAttrId::OBJPATH => UbusMsgAttr::ObjPath(payload.try_into().unwrap()),
+            BlobAttrId::OBJID => UbusMsgAttr::ObjId(payload.try_into().unwrap()),
+            BlobAttrId::METHOD => UbusMsgAttr::Method(payload.try_into().unwrap()),
+            BlobAttrId::OBJTYPE => UbusMsgAttr::ObjType(payload.try_into().unwrap()),
+            BlobAttrId::SIGNATURE => UbusMsgAttr::Signature(payload.try_into().unwrap()),
+            BlobAttrId::DATA => UbusMsgAttr::Data(payload.try_into().unwrap()),
+            BlobAttrId::TARGET => UbusMsgAttr::Target(payload.try_into().unwrap()),
+            BlobAttrId::ACTIVE => UbusMsgAttr::Active(payload.try_into().unwrap()),
+            BlobAttrId::NO_REPLY => UbusMsgAttr::NoReply(payload.try_into().unwrap()),
+            BlobAttrId::SUBSCRIBERS => UbusMsgAttr::Subscribers(payload.try_into().unwrap()),
+            BlobAttrId::USER => UbusMsgAttr::User(payload.try_into().unwrap()),
+            BlobAttrId::GROUP => UbusMsgAttr::Group(payload.try_into().unwrap()),
             id => UbusMsgAttr::Unknown(id, blob.data.into()),
         }
     }

@@ -1,6 +1,6 @@
 [package]
 name = "ubus"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["James Lee <jbit@jbit.net>"]
 edition = "2018"
 description = "Work-in-progress: OpenWRT ubus client library in pure Rust"
@@ -16,9 +16,7 @@ default = []
 no_std = []
 
 [dependencies]
-jsonpath-rust = "0.3.5"
-serde = { version = "1.0.193", features = ["derive"] }
-serde_json = "1.0.108"
+serde = { version = "1.0.193", default-features = false, features = ["derive", "std"] }
 storage_endian = { git = "https://github.com/jbit/storage_endian.git", version = "0.1.0" }
 
 [profile.release]

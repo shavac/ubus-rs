@@ -3,6 +3,7 @@
 
 #[cfg(not(no_std))]
 extern crate std;
+use serde::{Serialize, Deserialize};
 
 /// Macro for defining helpful enum-like opaque structs
 macro_rules! values {
@@ -27,7 +28,7 @@ macro_rules! values {
         }
     ) => {
         #[repr(transparent)]
-        #[derive(Copy, Clone, PartialEq, Eq)]
+        #[derive(Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
         $vis struct $name($repr);
         impl $name {
             $( pub const $variant: Self = Self($value); )*
@@ -77,7 +78,7 @@ macro_rules! valid_data {
     ($thing:expr, $msg:literal) => {{
         if !($thing) {
             invalid_data_panic!("Invalid Data: {}", $msg);
-            return Err(Error::InvalidData($msg));
+            return Err(UbusError::InvalidData($msg));
         }
     }};
 }
@@ -129,19 +130,22 @@ pub trait IOError {}
 
 pub trait IO {
     type Error: IOError;
-    fn put(&mut self, data: &[u8]) -> Result<(), Error<Self::Error>>;
-    fn get(&mut self, data: &mut [u8]) -> Result<(), Error<Self::Error>>;
+    fn put(&mut self, data: &[u8]) -> Result<(), UbusError>;
+    fn get(&mut self, data: &mut [u8]) -> Result<(), UbusError>;
 }
 
 #[cfg(not(no_std))]
 mod usock;
-
 mod blob;
 mod blobmsg;
 mod connection;
 mod ubusmsg;
+mod ubusobj;
+mod ubuserror;
 
 pub use blob::*;
 pub use blobmsg::*;
 pub use connection::*;
 pub use ubusmsg::*;
+pub use ubusobj::*;
+pub use ubuserror::*;

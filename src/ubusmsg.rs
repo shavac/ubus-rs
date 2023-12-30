@@ -1,8 +1,9 @@
-use crate::{Blob, BlobBuilder, BlobIter, BlobMsgPayload, BlobTag, Payload, Error, IO};
+use crate::{Blob, BlobBuilder, BlobIter, BlobMsgPayload, BlobTag, Payload, Error, IO, UbusError};
 use core::convert::TryInto;
 use core::mem::{size_of, transmute};
 use std::collections::HashMap;
 use storage_endian::{BEu16, BEu32};
+use serde::{Serialize,Deserialize};
 
 values!(pub UbusMsgVersion(u8) {
     CURRENT = 0x00,
@@ -69,7 +70,7 @@ pub struct UbusMsg<'a> {
 }
 
 impl<'a> UbusMsg<'a> {
-    pub fn from_io<T: IO>(io: &mut T, buffer: &'a mut [u8]) -> Result<Self, Error<T::Error>> {
+    pub fn from_io<T: IO>(io: &mut T, buffer: &'a mut [u8]) -> Result<Self, UbusError> {
         let (pre_buffer, buffer) = buffer.split_at_mut(UbusMsgHeader::SIZE + BlobTag::SIZE);
 
         // Read in the message header and the following blob tag
@@ -115,7 +116,7 @@ pub struct UbusMsgBuilder<'a> {
 }
 
 impl<'a> UbusMsgBuilder<'a> {
-    pub fn new(buffer: &'a mut [u8], header: &UbusMsgHeader) -> Result<Self, Error> {
+    pub fn new(buffer: &'a mut [u8], header: &UbusMsgHeader) -> Result<Self, UbusError> {
         valid_data!(
             buffer.len() >= (UbusMsgHeader::SIZE + BlobTag::SIZE),
             "Builder buffer is too small"
@@ -130,7 +131,7 @@ impl<'a> UbusMsgBuilder<'a> {
         Ok(Self { buffer, offset })
     }
 
-    pub fn put(&mut self, attr: UbusMsgAttr) -> Result<(), Error> {
+    pub fn put(&mut self, attr: UbusMsgAttr) -> Result<(), UbusError> {
         let mut blob = BlobBuilder::from_bytes(&mut self.buffer[self.offset..]);
 
         match attr {

@@ -1,14 +1,11 @@
 use std::{convert::TryInto, path::Path};
 
-use ubus::{BlobMsg, BlobMsgPayload};
+use ubus::{BlobMsg, BlobMsgPayload, UbusObject};
 
 fn main() {
     let obj_path = "network.device";
     let method = "status";
-    let args = Some(vec![BlobMsg {
-        name: "name",
-        data: BlobMsgPayload::String("eth0"),
-    }]);
+    let args = "{\"name\":\"eth0\"}";
 
     let socket = Path::new("/var/run/ubus/ubus.sock");
 
@@ -19,22 +16,33 @@ fn main() {
             return;
         }
     };
-    let obj_id = connection.lookup_id(obj_path).unwrap();
+    let mut obj_json = String::new();
     connection
-        .invoke(obj_id, method, args, |bi| {
-            let mut json_output = "{\n".to_string();
+    .lookup(
+        obj_path,
+        |obj| {
+            obj_json = serde_json::to_string_pretty(&obj).unwrap();
+        },
+    )
+    .unwrap();
+    let obj: UbusObject = serde_json::from_str(&obj_json).unwrap();
+    let args = obj.args_from_json(method, args).unwrap();
+    let mut json_str = String::new();
+    connection
+        .invoke(obj.id, method, &args, |bi| {
+            json_str = "{\n".to_string();
             let mut first = true;
             for x in bi {
                 if !first {
-                    json_output += ",\n";
+                    json_str += ",\n";
                 }
-                //json_output += &format!("{:?}", x);
+                //json_str += &format!("{:?}", x);
                 let msg: BlobMsg = x.try_into().unwrap();
-                json_output += &format!("{}", msg);
+                json_str += &format!("{}", msg);
                 first = false;
             }
-            json_output += "\n}";
-            println!("{}", json_output);
+            json_str += "\n}";
         })
         .unwrap();
+    println!("{}", json_str);
 }

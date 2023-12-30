@@ -1,5 +1,8 @@
 use std::{env, path::Path};
 
+use ubus::UbusObject;
+
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     let mut obj_path = "";
@@ -15,23 +18,15 @@ fn main() {
             return;
         }
     };
-/*     connection
-        .lookup(
-            obj_path,
-            |obj| {
-                println!("{:?}", obj);
-            },
-            |sig| {
-                println!("  {}:{:?}", sig.name, sig.args);
-            },
-        )
-        .unwrap(); */
+    let mut obj_json = String::new();
     connection
     .lookup(
         obj_path,
         |obj| {
-            println!("{:?}", obj);
+            obj_json = serde_json::to_string_pretty(&obj).unwrap();
         },
     )
     .unwrap();
+    let obj: UbusObject = serde_json::from_str(&obj_json).unwrap();
+    println!("{:?}", obj);
 }

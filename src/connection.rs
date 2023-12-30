@@ -2,8 +2,9 @@ use crate::*;
 use core::convert::TryFrom;
 use core::panic;
 use std::collections::HashMap;
-use std::println;
 use std::vec::Vec;
+extern crate alloc;
+use ubuserror::*;
 
 #[derive(Copy, Clone)]
 pub struct ObjectResult<'a> {
@@ -22,20 +23,8 @@ pub struct SignatureResult<'a> {
     pub name: &'a str,
     pub args: HashMap<&'a str, BlobMsgType>,
 }
-#[derive(Debug)]
-pub struct Signature<'a> {
-    pub name: &'a str,
-    pub args: HashMap<&'a str, BlobMsgType>,
-}
 
-#[derive(Default, Debug)]
-pub struct ObjectSignatures<'a> {
-    pub path: &'a str,
-    pub id: u32,
-    pub ty: u32,
-    pub signatures: HashMap<&'a str, Signature<'a>>,
-}
-
+#[derive(Clone,Copy)]
 pub struct Connection<T: IO> {
     io: T,
     peer: u32,
@@ -45,7 +34,7 @@ pub struct Connection<T: IO> {
 
 impl<T: IO> Connection<T> {
     /// Create a new ubus connection from an existing IO
-    pub fn new(io: T) -> Result<Self, Error<T::Error>> {
+    pub fn new(io: T) -> Result<Self, UbusError> {
         let mut conn = Self {
             io,
             peer: 0,
@@ -79,11 +68,11 @@ impl<T: IO> Connection<T> {
     }
 
     // Get next message from ubus channel (blocking!)
-    pub fn next_message(&mut self) -> Result<UbusMsg, Error<T::Error>> {
+    pub fn next_message(&mut self) -> Result<UbusMsg, UbusError> {
         UbusMsg::from_io(&mut self.io, &mut self.buffer)
     }
 
-    pub fn send(&mut self, message: UbusMsgBuilder) -> Result<(), Error<T::Error>> {
+    pub fn send(&mut self, message: UbusMsgBuilder) -> Result<(), UbusError> {
         self.io.put(message.into())
     }
 
@@ -91,23 +80,16 @@ impl<T: IO> Connection<T> {
         &mut self,
         obj: u32,
         method: &str,
-        args: Option<Vec<BlobMsg>>,
+        args: &[u8],
         mut on_result: impl FnMut(BlobIter<Blob>),
-    ) -> Result<(), Error<T::Error>> {
+    ) -> Result<(), UbusError> {
         let mut buffer = [0u8; 1024];
         let header = self.header_by_obj_cmd(obj, UbusCmdType::INVOKE);
         let mut message = UbusMsgBuilder::new(&mut buffer, &header).unwrap();
         message.put(UbusMsgAttr::ObjId(obj))?;
         message.put(UbusMsgAttr::Method(method))?;
-        let mut data = Vec::new();
-        if let Some(args) = args {
-            for blobmsg in args {
-                let bb = BlobMsgBuilder::try_from(blobmsg)?;
-                println!("{:?}", bb.data());
-                data.extend_from_slice(bb.data());
-            }
-        }
-        message.put(UbusMsgAttr::Data(&data))?;
+
+        message.put(UbusMsgAttr::Data(&args))?;
 
         self.send(message)?;
         'message: loop {
@@ -124,10 +106,10 @@ impl<T: IO> Connection<T> {
                         if let UbusMsgAttr::Status(0) = attr {
                             return Ok(());
                         } else if let UbusMsgAttr::Status(status) = attr {
-                            return Err(Error::Status(status));
+                            return Err(UbusError::Status(status));
                         }
                     }
-                    return Err(Error::InvalidData("Invalid status message"));
+                    return Err(UbusError::InvalidData("Invalid status message"));
                 }
                 UbusCmdType::DATA => {
                     for attr in attrs {
@@ -136,7 +118,7 @@ impl<T: IO> Connection<T> {
                             continue 'message;
                         }
                     }
-                    return Err(Error::InvalidData("Invalid data message"));
+                    return Err(UbusError::InvalidData("Invalid data message"));
                 }
                 unknown => {
                     std::dbg!(unknown);
@@ -150,7 +132,7 @@ impl<T: IO> Connection<T> {
         obj_path: &str,
         mut on_object: impl FnMut(ObjectResult),
         mut on_signature: impl FnMut(SignatureResult),
-    ) -> Result<(), Error<T::Error>> {
+    ) -> Result<(), UbusError> {
         let mut buffer = [0u8; 1024];
         let header = self.header_by_obj_cmd(0, UbusCmdType::LOOKUP);
         let mut request = UbusMsgBuilder::new(&mut buffer, &header).unwrap();
@@ -172,10 +154,10 @@ impl<T: IO> Connection<T> {
                     if let UbusMsgAttr::Status(0) = attr {
                         return Ok(());
                     } else if let UbusMsgAttr::Status(status) = attr {
-                        return Err(Error::Status(status));
+                        return Err(UbusError::Status(status));
                     }
                 }
-                return Err(Error::InvalidData("Invalid status message"));
+                return Err(UbusError::InvalidData("Invalid status message"));
             }
 
             if message.header.cmd_type != UbusCmdType::DATA {
@@ -223,7 +205,7 @@ impl<T: IO> Connection<T> {
         }
     }
 
-    pub fn lookup_id(&mut self, obj_path: &str) -> Result<u32, Error<T::Error>> {
+    pub fn lookup_id(&mut self, obj_path: &str) -> Result<u32, UbusError> {
         let mut obj_id = 0u32;
         self.lookup(obj_path, |obj| obj_id = obj.id)?;
         Ok(obj_id)
@@ -232,8 +214,8 @@ impl<T: IO> Connection<T> {
     pub fn lookup(
         &mut self,
         obj_path: &str,
-        mut on_object: impl FnMut(ObjectSignatures),
-    ) -> Result<(), Error<T::Error>> {
+        mut on_object: impl FnMut(UbusObject),
+    ) -> Result<(), UbusError> {
         let mut buffer = [0u8; 1024];
         let header = self.header_by_obj_cmd(0, UbusCmdType::LOOKUP);
         let mut request = UbusMsgBuilder::new(&mut buffer, &header).unwrap();
@@ -255,16 +237,16 @@ impl<T: IO> Connection<T> {
                     if let UbusMsgAttr::Status(0) = attr {
                         return Ok(());
                     } else if let UbusMsgAttr::Status(status) = attr {
-                        return Err(Error::Status(status));
+                        return Err(UbusError::Status(status));
                     }
                 }
-                return Err(Error::InvalidData("Invalid status message"));
+                return Err(UbusError::InvalidData("Invalid status message"));
             }
 
             if message.header.cmd_type != UbusCmdType::DATA {
                 continue;
             }
-            let mut obj = ObjectSignatures::default();
+            let mut obj = UbusObject::default();
             for attr in attrs {
                 match attr {
                     UbusMsgAttr::ObjPath(path) => obj.path = path,
@@ -272,9 +254,9 @@ impl<T: IO> Connection<T> {
                     UbusMsgAttr::ObjType(ty) => obj.ty = ty,
                     UbusMsgAttr::Signature(nested) => {
                         for item in nested {
-                            let signature = Signature {
+                            let signature = Method {
                                 name: item.0,
-                                args: if let BlobMsgPayload::Table(table) = item.1 {
+                                policy: if let BlobMsgPayload::Table(table) = item.1 {
                                     table
                                         .iter()
                                         .map(|(k, v)| {
@@ -289,7 +271,7 @@ impl<T: IO> Connection<T> {
                                     panic!()
                                 },
                             };
-                            obj.signatures.insert(item.0, signature);
+                            obj.methods.insert(item.0, signature);
                         }
                     }
                     _ => continue,
@@ -298,4 +280,69 @@ impl<T: IO> Connection<T> {
             on_object(obj);
         }
     }
+
+    //  pub fn lookup_object<'a>(&'a mut self, obj_path: &'a str) -> Result<Vec<UbusObject>, UbusError> {
+    //     let mut buffer = [0u8; 1024];
+    //     let header = self.header_by_obj_cmd(0, UbusCmdType::LOOKUP);
+    //     let mut request = UbusMsgBuilder::new(&mut buffer, &header).unwrap();
+    //     if obj_path.len() != 0 {
+    //         request.put(UbusMsgAttr::ObjPath(obj_path)).unwrap();
+    //     }
+    //     self.send(request)?;
+    //     let mut objs = Vec::new();
+    //     loop {
+    //         let message = self.next_message()?;
+    //         if message.header.sequence != header.sequence {
+    //             continue;
+    //         }
+
+    //         let attrs = BlobIter::<UbusMsgAttr>::new(message.blob.data);
+
+    //         if message.header.cmd_type == UbusCmdType::STATUS {
+    //             for attr in attrs {
+    //                 if let UbusMsgAttr::Status(0) = attr {
+    //                     return Ok(Vec::new());
+    //                 } else if let UbusMsgAttr::Status(status) = attr {
+    //                     return Err(UbusError::Status(status));
+    //                 }
+    //             }
+    //             return Err(UbusError::InvalidData("Invalid status message"));
+    //         }
+
+    //         if message.header.cmd_type != UbusCmdType::DATA {
+    //             continue;
+    //         }
+    //         let mut obj = UbusObject::default();
+    //         for attr in attrs {
+    //             match attr {
+    //                 UbusMsgAttr::ObjPath(path) => obj.path = path,
+    //                 UbusMsgAttr::ObjId(id) => obj.id = id,
+    //                 UbusMsgAttr::ObjType(ty) => obj.ty = ty,
+    //                 UbusMsgAttr::Signature(nested) => {
+    //                     for item in nested {
+    //                         let signature = Method {
+    //                             name: item.0,
+    //                             policy: if let BlobMsgPayload::Table(table) = item.1 {
+    //                                 table
+    //                                     .iter()
+    //                                     .map(|(k, v)| {
+    //                                         if let BlobMsgPayload::Int32(typeid) = *v {
+    //                                             (*k, BlobMsgType::from(typeid as u32))
+    //                                         } else {
+    //                                             panic!()
+    //                                         }
+    //                                     })
+    //                                     .collect()
+    //                             } else {
+    //                                 panic!()
+    //                             },
+    //                         };
+    //                         obj.methods.insert(item.0, signature);
+    //                     }
+    //                 }
+    //                 _ => continue,
+    //             }            
+    //         }
+    //         objs.push(obj);
+    // }
 }

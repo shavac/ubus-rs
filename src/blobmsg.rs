@@ -1,8 +1,8 @@
-use core::str;
-use serde::Deserialize;
 use std::collections::HashMap;
 use std::fmt;
 use std::vec::Vec;
+
+use serde::{Deserialize, Serialize};
 
 values!(pub BlobMsgType(u32) {
     UNSPEC = 0,
@@ -17,8 +17,7 @@ values!(pub BlobMsgType(u32) {
     DOUBLE = 8,
 });
 
-#[derive(Debug, Deserialize, Clone)]
-#[serde(untagged)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BlobMsgPayload<'a> {
     Array(Vec<BlobMsg<'a>>),
     Table(HashMap<&'a str, BlobMsgPayload<'a>>),
@@ -87,7 +86,7 @@ impl<'a> fmt::Display for Dict<'a> {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlobMsg<'a> {
     pub name: &'a str,
     pub data: BlobMsgPayload<'a>,

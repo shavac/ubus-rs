@@ -1,6 +1,5 @@
 use crate::{BlobMsg, BlobMsgPayload, BlobMsgType, UbusError};
 
-use super::Error;
 use core::convert::{TryFrom, TryInto};
 use core::marker::PhantomData;
 use core::mem::{align_of, size_of, transmute};
@@ -389,10 +388,7 @@ impl<'a> TryFrom<BlobMsg<'a>> for BlobMsgBuilder<'a> {
             BlobMsgPayload::Table(table) => {
                 let mut blob = BlobMsgBuilder::new_extended(BlobMsgType::TABLE.value(), name);
                 for (name, data) in table {
-                    let inner_blobmsg = BlobMsg {
-                        name,
-                        data,
-                    };
+                    let inner_blobmsg = BlobMsg { name, data };
                     let inner_blob = BlobMsgBuilder::try_from(inner_blobmsg).unwrap();
                     //let inner_blob = inner_blob.build();
                     blob.push_bytes(inner_blob.data())?;
@@ -406,15 +402,15 @@ impl<'a> TryFrom<BlobMsg<'a>> for BlobMsgBuilder<'a> {
 
 impl<'a> BlobMsgBuilder<'a> {
     pub fn from_bytes(bytes: &'a [u8]) -> Self {
-        Self{ buffer: Vec::from(bytes), _phantom: PhantomData }
+        Self {
+            buffer: Vec::from(bytes),
+            _phantom: PhantomData,
+        }
     }
     pub fn new_extended(id: u32, name: &str) -> Self {
         let buffer = Vec::new();
         let _phantom = PhantomData::<&mut [u8]>;
-        let mut blob = Self {
-            buffer,
-            _phantom,
-        };
+        let mut blob = Self { buffer, _phantom };
         //blob.buffer.extend(&[0u8; BlobTag::SIZE]);
         let tag = BlobTag::new(id, BlobTag::SIZE, true).unwrap();
         blob.buffer.extend(tag.to_bytes());
@@ -432,11 +428,14 @@ impl<'a> BlobMsgBuilder<'a> {
     }
 
     pub fn tag(&self) -> BlobTag {
-        let tag_bytes:[u8;BlobTag::SIZE] = self.buffer[..4].try_into().unwrap();
+        let tag_bytes: [u8; BlobTag::SIZE] = self.buffer[..4].try_into().unwrap();
         BlobTag::from_bytes(tag_bytes)
     }
 
-    pub fn push_bytes<'b>(&mut self, data: impl IntoIterator<Item = &'b u8>) -> Result<(), UbusError> {
+    pub fn push_bytes<'b>(
+        &mut self,
+        data: impl IntoIterator<Item = &'b u8>,
+    ) -> Result<(), UbusError> {
         for b in data {
             self.buffer.push(*b);
         }

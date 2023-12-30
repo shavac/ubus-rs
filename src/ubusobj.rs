@@ -40,37 +40,37 @@ impl<'a> UbusObject<'a> {
                                     if let Some(s) = v.as_str() {
                                         builder.push_str(s)?;
                                     }
-                                },
+                                }
                                 BlobMsgType::INT64 => {
-                                    if let Some(num) = v.as_i64(){
+                                    if let Some(num) = v.as_i64() {
                                         builder.push_int64(num)?;
                                     }
-                                },
+                                }
                                 BlobMsgType::INT32 => {
-                                    if let Some(num) = v.as_i64(){
+                                    if let Some(num) = v.as_i64() {
                                         builder.push_int32(num as i32)?;
                                     }
-                                },
+                                }
                                 BlobMsgType::INT16 => {
-                                    if let Some(num) = v.as_i64(){
+                                    if let Some(num) = v.as_i64() {
                                         builder.push_int16(num as i16)?;
                                     }
-                                },
-                                BlobMsgType::BOOL => {
-                                    if let Some(b) = v.as_bool() {
-                                        builder.push_bool(b)?;
-                                    }
-                                },
+                                }
                                 BlobMsgType::INT8 => {
-                                    if let Some(num) = v.as_i64(){
+                                    if let Some(num) = v.as_i64() {
                                         builder.push_int8(num as i8)?;
                                     }
-                                },
+                                }
+                                // BlobMsgType::BOOL => {
+                                //     if let Some(b) = v.as_bool() {
+                                //         builder.push_bool(b)?;
+                                //     }
+                                // }
                                 BlobMsgType::DOUBLE => {
                                     if let Some(b) = v.as_f64() {
                                         builder.push_double(b)?;
                                     }
-                                },
+                                }
                                 _ => continue,
                             }
                             args.extend_from_slice(builder.data())

@@ -1,9 +1,9 @@
-use crate::{Blob, BlobBuilder, BlobIter, BlobMsgPayload, BlobTag, Payload, Error, IO, UbusError};
+use crate::{Blob, BlobBuilder, BlobIter, BlobMsgPayload, BlobTag, Payload, UbusError, IO};
 use core::convert::TryInto;
 use core::mem::{size_of, transmute};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use storage_endian::{BEu16, BEu32};
-use serde::{Serialize,Deserialize};
 
 values!(pub UbusMsgVersion(u8) {
     CURRENT = 0x00,
@@ -178,7 +178,7 @@ pub enum UbusMsgAttr<'a> {
     ObjId(u32),
     Method(&'a str),
     ObjType(u32),
-    Signature(HashMap<&'a str,BlobMsgPayload<'a>>),
+    Signature(HashMap<&'a str, BlobMsgPayload<'a>>),
     Data(&'a [u8]),
     Target(u32),
     Active(bool),

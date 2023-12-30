@@ -3,7 +3,6 @@
 
 #[cfg(not(no_std))]
 extern crate std;
-use serde::{Serialize, Deserialize};
 
 /// Macro for defining helpful enum-like opaque structs
 macro_rules! values {
@@ -134,18 +133,18 @@ pub trait IO {
     fn get(&mut self, data: &mut [u8]) -> Result<(), UbusError>;
 }
 
-#[cfg(not(no_std))]
-mod usock;
 mod blob;
 mod blobmsg;
 mod connection;
+mod ubuserror;
 mod ubusmsg;
 mod ubusobj;
-mod ubuserror;
+#[cfg(not(no_std))]
+mod usock;
 
 pub use blob::*;
 pub use blobmsg::*;
 pub use connection::*;
+pub use ubuserror::*;
 pub use ubusmsg::*;
 pub use ubusobj::*;
-pub use ubuserror::*;

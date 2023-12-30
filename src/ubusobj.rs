@@ -21,6 +21,9 @@ pub struct UbusObject<'a> {
 impl<'a> UbusObject<'a> {
     pub fn args_from_json(&self, method: &'a str, json: &'a str) -> Result<Vec<u8>, UbusError> {
         let mut args = Vec::new();
+        if json.len() == 0 {
+            return Ok(args);
+        }
         match serde_json::from_str::<Value>(json) {
             Ok(value) => {
                 if let Some(object) = value.as_object() {
@@ -82,5 +85,3 @@ impl<'a> UbusObject<'a> {
         }
     }
 }
-
-pub struct Arguments<'a>(Vec<BlobMsg<'a>>);

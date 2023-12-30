@@ -1,9 +1,10 @@
 use crate::*;
-use core::convert::TryFrom;
+
 use core::panic;
 use std::collections::HashMap;
-use std::vec::Vec;
 extern crate alloc;
+use alloc::string::String;
+use std::format;
 use ubuserror::*;
 
 #[derive(Copy, Clone)]
@@ -24,7 +25,7 @@ pub struct SignatureResult<'a> {
     pub args: HashMap<&'a str, BlobMsgType>,
 }
 
-#[derive(Clone,Copy)]
+#[derive(Clone, Copy)]
 pub struct Connection<T: IO> {
     io: T,
     peer: u32,
@@ -125,6 +126,41 @@ impl<T: IO> Connection<T> {
                 }
             }
         }
+    }
+
+    pub fn call<'a>(
+        &'a mut self,
+        obj_path: &'a str,
+        method: &'a str,
+        args: &'a str,
+    ) -> Result<String, UbusError> {
+        let obj_json = self.lookup_object_json(obj_path)?;
+        let obj: UbusObject = serde_json::from_str(&obj_json)?;
+        let args = obj.args_from_json(method, args).unwrap();
+        let mut json = String::new();
+        self.invoke(obj.id, method, &args, |bi| {
+            json += "{\n";
+            let mut first = true;
+            for x in bi {
+                if !first {
+                    json += ",\n";
+                }
+                //json_str += &format!("{:?}", x);
+                let msg: BlobMsg = x.try_into().unwrap();
+                json += &format!("\t{}", msg);
+                first = false;
+            }
+            json += "\n}";
+        })?;
+        Ok(json)
+    }
+
+    pub fn lookup_object_json<'a>(&'a mut self, obj_path: &'a str) -> Result<String, UbusError> {
+        let mut obj_json = String::new();
+        self.lookup(obj_path, |obj| {
+            obj_json = serde_json::to_string_pretty(&obj).unwrap();
+        })?;
+        Ok(obj_json)
     }
 
     pub fn lookup_cb(
@@ -341,7 +377,7 @@ impl<T: IO> Connection<T> {
     //                     }
     //                 }
     //                 _ => continue,
-    //             }            
+    //             }
     //         }
     //         objs.push(obj);
     // }

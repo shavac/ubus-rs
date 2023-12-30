@@ -1,6 +1,6 @@
 use std::{convert::TryInto, path::Path};
 
-use ubus::{BlobMsg, BlobMsgPayload, UbusObject};
+use ubus::{BlobMsg, UbusObject};
 
 fn main() {
     let obj_path = "network.device";

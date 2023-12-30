@@ -1,6 +1,6 @@
 [package]
 name = "ubus"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["James Lee <jbit@jbit.net>"]
 edition = "2021"
 description = "Work-in-progress: OpenWRT ubus client library in pure Rust"

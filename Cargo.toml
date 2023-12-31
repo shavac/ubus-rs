@@ -23,4 +23,8 @@ thiserror = "1.0.52"
 
 [profile.release]
 panic = 'abort'
+opt-level = 'z' # Optimize for size.
+lto = true      # Enable link time optimization.
+strip = true
+codegen-units = 1
 

@@ -1,6 +1,6 @@
 use std::path::Path;
 use std::env;
-
+use serde_json::{to_string_pretty, Value};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -28,5 +28,7 @@ fn main() {
         }
     };
     let json = connection.call(obj_path, method, data).unwrap();
-    println!("{}", json);
+    let parsed: Value = serde_json::from_str(&json).unwrap();
+    let pretty_json = to_string_pretty(&parsed).unwrap();
+    println!("{}", pretty_json);
 }

@@ -61,7 +61,7 @@ impl<'a> fmt::Display for List<'a> {
             } else {
                 first = false;
             }
-            write!(f, "{}", msg)?; // Use the Display implementation of BlobMsg
+            write!(f, "{}", msg.data)?;
         }
         write!(f, "]")?;
         Ok(())

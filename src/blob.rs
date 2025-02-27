@@ -197,6 +197,7 @@ impl<'a> TryInto<BlobMsg<'a>> for Blob<'a> {
             BlobMsgType::INT32 => BlobMsgPayload::Int32(payload.try_into()?),
             BlobMsgType::INT16 => BlobMsgPayload::Int16(payload.try_into()?),
             BlobMsgType::INT8 => BlobMsgPayload::Int8(payload.try_into()?),
+            BlobMsgType::DOUBLE => BlobMsgPayload::Double(payload.try_into()?),
             id => BlobMsgPayload::Unknown(id.value(), payload.into()),
         };
         Ok(BlobMsg { name, data })

@@ -25,7 +25,7 @@ fn test() {
             |obj| {
                 println!("\n{:?}", obj);
             },
-/*             |sig| {
+            /*             |sig| {
                 print!("  {}(", sig.name);
                 for (name, ty) in sig.args {
                     print!("{}: {:?}, ", name, ty);

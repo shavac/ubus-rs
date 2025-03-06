@@ -139,12 +139,13 @@ impl<'a> UbusMsgBuilder<'a> {
             UbusMsgAttr::ObjPath(val) => blob.push_str(BlobAttrId::OBJPATH.value(), val)?,
             UbusMsgAttr::ObjId(val) => blob.push_u32(BlobAttrId::OBJID.value(), val)?,
             UbusMsgAttr::Method(val) => blob.push_str(BlobAttrId::METHOD.value(), val)?,
-            UbusMsgAttr::ObjType(val) => blob.push_u32(BlobAttrId::STATUS.value(), val)?,
+            //UbusMsgAttr::ObjType(val) => blob.push_u32(BlobAttrId::STATUS.value(), val)?,
+            UbusMsgAttr::ObjType(val) => blob.push_u32(BlobAttrId::OBJTYPE.value(), val)?,
             UbusMsgAttr::Signature(_) => unimplemented!(),
             UbusMsgAttr::Data(val) => blob.push_bytes(BlobAttrId::DATA.value(), val)?,
             UbusMsgAttr::Target(val) => blob.push_u32(BlobAttrId::TARGET.value(), val)?,
-            UbusMsgAttr::Active(val) => blob.push_bool(BlobAttrId::USER.value(), val)?,
-            UbusMsgAttr::NoReply(val) => blob.push_bool(BlobAttrId::USER.value(), val)?,
+            UbusMsgAttr::Active(val) => blob.push_bool(BlobAttrId::ACTIVE.value(), val)?,
+            UbusMsgAttr::NoReply(val) => blob.push_bool(BlobAttrId::NO_REPLY.value(), val)?,
             UbusMsgAttr::Subscribers(_) => unimplemented!(),
             UbusMsgAttr::User(val) => blob.push_str(BlobAttrId::USER.value(), val)?,
             UbusMsgAttr::Group(val) => blob.push_str(BlobAttrId::GROUP.value(), val)?,
@@ -152,7 +153,6 @@ impl<'a> UbusMsgBuilder<'a> {
         };
 
         self.offset += blob.len();
-
         Ok(())
     }
 

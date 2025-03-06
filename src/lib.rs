@@ -1,7 +1,7 @@
 #![no_std]
 #![allow(dead_code)]
 
-#[cfg(not(no_std))]
+//#[cfg(not(no_std))]
 extern crate std;
 
 /// Macro for defining helpful enum-like opaque structs
@@ -139,7 +139,6 @@ mod connection;
 mod ubuserror;
 mod ubusmsg;
 mod ubusobj;
-#[cfg(not(no_std))]
 mod usock;
 
 pub use blob::*;

@@ -1,15 +1,15 @@
-use std::path::Path;
-use std::env;
 use serde_json::{to_string_pretty, Value};
+use std::env;
+use std::path::Path;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
     let mut obj_path = "";
     let mut method = "";
     let mut data = "";
-    if args.len() < 2 || args.len() > 4{
+    if args.len() < 2 || args.len() > 4 {
         eprintln!("{} <object> <method> [arguments as json]", args[0]);
-        return
+        return;
     } else if args.len() >= 3 {
         obj_path = &args[1];
         method = &args[2];

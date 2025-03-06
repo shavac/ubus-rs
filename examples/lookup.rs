@@ -2,7 +2,6 @@ use std::{env, path::Path};
 
 use ubus::UbusObject;
 
-
 fn main() {
     let args: Vec<String> = env::args().collect();
     let mut obj_path = "";
@@ -20,13 +19,10 @@ fn main() {
     };
     let mut obj_json = String::new();
     connection
-    .lookup(
-        obj_path,
-        |obj| {
+        .lookup(obj_path, |obj| {
             obj_json = serde_json::to_string_pretty(&obj).unwrap();
-        },
-    )
-    .unwrap();
+        })
+        .unwrap();
     let obj: UbusObject = serde_json::from_str(&obj_json).unwrap();
     println!("{:?}", obj);
 }

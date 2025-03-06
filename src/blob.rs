@@ -9,7 +9,7 @@ use std::vec::Vec;
 use storage_endian::BEu32;
 
 #[repr(transparent)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub struct BlobTag(BEu32);
 impl BlobTag {
     pub const SIZE: usize = size_of::<Self>();
@@ -27,7 +27,7 @@ impl BlobTag {
             let len = len as u32 & Self::LEN_MASK;
             let mut val = len | (id << Self::ID_SHIFT);
             if extended {
-                val = val | Self::EXTENDED_BIT;
+                val |= Self::EXTENDED_BIT;
             }
             Ok(Self(val.into()))
         }
@@ -51,8 +51,7 @@ impl BlobTag {
     }
 
     pub fn set_size(&mut self, size: usize) {
-        let tag = Self::new(self.id(), size, self.is_extended()).unwrap();
-        self.0 = tag.0
+        *self = Self::new(self.id(), size, self.is_extended()).unwrap();
     }
     /// Number of padding bytes between this blob and the next blob
     fn padding(&self) -> usize {
@@ -103,7 +102,7 @@ impl<'a> BlobBuilder<'a> {
     }
 
     pub fn push_str(&mut self, id: u32, data: &str) -> Result<(), UbusError> {
-        self.push_bytes(id, data.as_bytes().iter().chain([0u8].iter()))
+        self.push_bytes(id, data.as_bytes().iter().chain([0].iter()))
     }
 
     pub fn push_bytes<'b>(
@@ -169,7 +168,7 @@ impl<'a> TryInto<BlobMsg<'a>> for Blob<'a> {
     type Error = UbusError;
     fn try_into(self) -> Result<BlobMsg<'a>, Self::Error> {
         if !self.tag.is_extended() {
-            return Err(UbusError::InvalidData("Not a extended blob"));
+            return Err(UbusError::InvalidData("Not an extended blob"));
         }
         let (len_bytes, data) = self.data.split_at(size_of::<u16>());
         let name_len = u16::from_be_bytes(len_bytes.try_into().unwrap()) as usize;

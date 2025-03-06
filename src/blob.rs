@@ -102,7 +102,7 @@ impl<'a> BlobBuilder<'a> {
     }
 
     pub fn push_str(&mut self, id: u32, data: &str) -> Result<(), UbusError> {
-        self.push_bytes(id, data.as_bytes().iter().chain([0].iter()))
+        self.push_bytes(id, data.as_bytes().iter().chain([0u8].iter()))
     }
 
     pub fn push_bytes<'b>(

@@ -1,7 +1,7 @@
 #![no_std]
 #![allow(dead_code)]
 
-//#[cfg(not(no_std))]
+#[cfg(not(no_std))]
 extern crate std;
 
 /// Macro for defining helpful enum-like opaque structs

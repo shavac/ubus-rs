@@ -1,4 +1,4 @@
-use serde_json::{to_string_pretty, Value};
+use serde_json::{Value, to_string_pretty};
 use std::env;
 use std::path::Path;
 

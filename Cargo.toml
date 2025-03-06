@@ -1,8 +1,8 @@
 [package]
 name = "ubus"
-version = "0.1.6"
+version = "0.1.7"
 authors = ["James Lee <jbit@jbit.net>", "Kshava Lewis <knightmare1980@gmail.com>"]
-edition = "2021"
+edition = "2024"
 description = "Work-in-progress: OpenWRT ubus client library in pure Rust"
 keywords = ["embedded", "openwrt"]
 categories = ["embedded", "os", "os::linux-apis","api-bindings"]

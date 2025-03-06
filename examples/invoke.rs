@@ -9,18 +9,18 @@ fn main() {
 
     let socket = Path::new("/var/run/ubus/ubus.sock");
 
-    let mut connection = ubus::Connection::connect(&socket).map_err(|err| {
+    let mut connection = ubus::Connection::connect(&socket)
+        .map_err(|err| {
             eprintln!("{}: Failed to open ubus socket. {}", socket.display(), err);
             err
-    }).unwrap();
+        })
+        .unwrap();
     let mut obj_json = String::new();
     connection
-    .lookup(
-        obj_path,
-        |obj| {
+        .lookup(obj_path, |obj| {
             obj_json = serde_json::to_string_pretty(&obj).unwrap();
-        },
-    ).unwrap();
+        })
+        .unwrap();
     let obj: UbusObject = serde_json::from_str(&obj_json).unwrap();
     let args = obj.args_from_json(method, args).unwrap();
     let mut json_str = String::new();
@@ -38,6 +38,7 @@ fn main() {
                 first = false;
             }
             json_str += "\n}";
-        }).unwrap();
+        })
+        .unwrap();
     println!("{}", json_str);
 }

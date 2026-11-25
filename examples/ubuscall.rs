@@ -1,4 +1,3 @@
-use serde_json::{Value, to_string_pretty};
 use std::env;
 use std::path::Path;
 
@@ -20,15 +19,13 @@ fn main() {
 
     let socket = Path::new("/var/run/ubus/ubus.sock");
 
-    let mut connection = match ubus::Connection::connect(&socket) {
+    let mut connection = match ubus::Connection::connect(socket) {
         Ok(connection) => connection,
         Err(err) => {
             eprintln!("{}: Failed to open ubus socket. {}", socket.display(), err);
             return;
         }
     };
-    let json = connection.call(obj_path, method, data).unwrap();
-    let parsed: Value = serde_json::from_str(&json).unwrap();
-    let pretty_json = to_string_pretty(&parsed).unwrap();
+    let pretty_json = connection.call_pretty(obj_path, method, data).unwrap();
     println!("{}", pretty_json);
 }

@@ -1,6 +1,6 @@
 [package]
 name = "ubus"
-version = "0.1.7"
+version = "0.2.0"
 authors = ["James Lee <jbit@jbit.net>", "Kshava Lewis <knightmare1980@gmail.com>"]
 edition = "2024"
 description = "Work-in-progress: OpenWRT ubus client library in pure Rust"
@@ -12,14 +12,23 @@ license = "BSD-2-Clause"
 maintenance = { status = "experimental" }
 
 [features]
-default = []
+default = ["json"]
+json = ["dep:serde_json"]
 no_std = []
 
 [dependencies]
-serde = { version = "1.0.193", default-features = false, features = ["derive"] }
-serde_json = "1.0.108"
+serde = { version = "1.0.193", default-features = false, features = ["derive", "std"] }
+serde_json = { version = "1.0.108", optional = true }
 storage_endian = { git = "https://github.com/jbit/storage_endian.git", version = "0.1.0" }
 thiserror = "1.0.52"
+
+[[example]]
+name = "invoke"
+required-features = ["json"]
+
+[[example]]
+name = "ubuscall"
+required-features = ["json"]
 
 [profile.release]
 panic = 'abort'

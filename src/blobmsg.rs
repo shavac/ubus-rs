@@ -1,6 +1,6 @@
+use alloc::vec::Vec;
+use core::fmt;
 use std::collections::HashMap;
-use std::fmt;
-use std::vec::Vec;
 
 use serde::{Deserialize, Serialize};
 
@@ -12,10 +12,14 @@ values!(pub BlobMsgType(u32) {
     INT64  = 4,
     INT32  = 5,
     INT16  = 6,
-    BOOL   = 7,
     INT8   = 7,
     DOUBLE = 8,
 });
+
+impl BlobMsgType {
+    /// Alias for `INT8` (`BLOBMSG_TYPE_BOOL` and `BLOBMSG_TYPE_INT8` share type ID 7 in libubox).
+    pub const BOOL: Self = Self::INT8;
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BlobMsgPayload<'a> {
@@ -50,39 +54,37 @@ impl fmt::Display for BlobMsgPayload<'_> {
     }
 }
 
-struct List<'a>(&'a Vec<BlobMsg<'a>>);
-impl<'a> fmt::Display for List<'a> {
+struct List<'a>(&'a [BlobMsg<'a>]);
+impl fmt::Display for List<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[")?;
+        f.write_str("[")?;
         let mut first = true;
         for msg in self.0 {
             if !first {
-                write!(f, ", ")?;
+                f.write_str(", ")?;
             } else {
                 first = false;
             }
             write!(f, "{}", msg.data)?;
         }
-        write!(f, "]")?;
-        Ok(())
+        f.write_str("]")
     }
 }
 
 struct Dict<'a>(&'a HashMap<&'a str, BlobMsgPayload<'a>>);
-impl<'a> fmt::Display for Dict<'a> {
+impl fmt::Display for Dict<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{{")?;
+        f.write_str("{")?;
         let mut first = true;
         for (k, v) in self.0 {
             if first {
                 first = false;
             } else {
-                write!(f, ", ")?;
+                f.write_str(", ")?;
             }
             write!(f, "\"{}\": {}", k, v)?;
         }
-        write!(f, "}}")?;
-        Ok(())
+        f.write_str("}")
     }
 }
 
@@ -94,7 +96,7 @@ pub struct BlobMsg<'a> {
 
 impl fmt::Display for BlobMsg<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.name.len() > 0 {
+        if !self.name.is_empty() {
             write!(f, "\"{}\": {}", self.name, self.data)
         } else {
             write!(f, "{}", self.data)

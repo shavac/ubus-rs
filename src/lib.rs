@@ -1,7 +1,7 @@
 #![no_std]
-#![allow(dead_code)]
 
-#[cfg(not(no_std))]
+extern crate alloc;
+#[cfg(not(feature = "no_std"))]
 extern crate std;
 
 /// Macro for defining helpful enum-like opaque structs
@@ -13,7 +13,7 @@ macro_rules! values {
     ) => {
         values!($vis $name($repr) { $( $variant = $value , )* });
         impl $name {
-            pub fn other(self) -> Option<$other> {
+            pub const fn other(self) -> Option<$other> {
                 match self {
                     $( Self::$variant => Some($othervalue), )*
                     _ => None,
@@ -31,13 +31,10 @@ macro_rules! values {
         $vis struct $name($repr);
         impl $name {
             $( pub const $variant: Self = Self($value); )*
-            pub fn known(self) -> bool {
-                match self {
-                    $( Self::$variant => true, )*
-                    _ => false,
-                }
+            pub const fn known(self) -> bool {
+                matches!(self, $( Self::$variant )|*)
             }
-            pub fn value(self) -> $repr {
+            pub const fn value(self) -> $repr {
                 self.0
             }
         }
@@ -65,19 +62,19 @@ macro_rules! valid_data {
     (($left:expr) >= ($right:expr), $msg:literal) => {{
         if !(($left) >= ($right)) {
             invalid_data_panic!("Invalid Data: {} ({:?} < {:?})", $msg, $left, $right);
-            return Err(Error::InvalidData($msg));
+            return Err(crate::UbusError::InvalidData($msg));
         }
     }};
     (($left:expr) == ($right:expr), $msg:literal) => {{
         if !(($left) == ($right)) {
             invalid_data_panic!("Invalid Data: {} ({:?} != {:?})", $msg, $left, $right);
-            return Err(Error::InvalidData($msg));
+            return Err(crate::UbusError::InvalidData($msg));
         }
     }};
     ($thing:expr, $msg:literal) => {{
         if !($thing) {
             invalid_data_panic!("Invalid Data: {}", $msg);
-            return Err(UbusError::InvalidData($msg));
+            return Err(crate::UbusError::InvalidData($msg));
         }
     }};
 }
@@ -136,6 +133,7 @@ pub trait IO {
 mod blob;
 mod blobmsg;
 mod connection;
+mod serde_blob;
 mod ubuserror;
 mod ubusmsg;
 mod ubusobj;
@@ -144,6 +142,7 @@ mod usock;
 pub use blob::*;
 pub use blobmsg::*;
 pub use connection::*;
+pub use serde_blob::*;
 pub use ubuserror::*;
 pub use ubusmsg::*;
 pub use ubusobj::*;

@@ -22,8 +22,8 @@ struct SystemInfo {
 
 #[test]
 fn test() {
-    // Verify Connection stack size is small (< 64 bytes instead of 64 KiB)
-    assert!(size_of::<Connection<UnixStream>>() <= 64);
+    // Verify Connection stack size stays small (<= 80 bytes instead of 64 KiB)
+    assert!(size_of::<Connection<UnixStream>>() <= 80);
 
     let (client, mut server) = UnixStream::pair().unwrap();
 

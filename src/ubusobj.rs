@@ -19,369 +19,309 @@ pub struct UbusObject<'a> {
 #[cfg(feature = "json")]
 mod json_args {
     use crate::*;
-    use alloc::{
-        borrow::Cow,
-        string::{String, ToString},
-        vec::Vec,
-    };
+    use alloc::{borrow::Cow, string::ToString, vec::Vec};
     use core::fmt;
     use serde::de::{
-        self, Deserialize, DeserializeSeed, Deserializer, IgnoredAny, MapAccess, SeqAccess,
-        Visitor,
+        self, DeserializeSeed, Deserializer, IgnoredAny, MapAccess, SeqAccess, Visitor,
     };
 
-    /// Lightweight scalar representation that borrows strings directly from the input JSON slice
-    /// instead of allocating a `serde_json::Value` DOM tree on the heap.
-    enum ScalarArg<'de> {
-        Str(Cow<'de, str>),
-        I64(i64),
-        U64(u64),
-        F64(f64),
-        Bool(bool),
-        Other,
+    #[derive(Copy, Clone)]
+    pub enum FieldPolicy {
+        Typed(BlobMsgType),
+        Dynamic,
+        Skip,
     }
 
-    impl<'de> ScalarArg<'de> {
-        fn as_str(&self) -> Option<&str> {
-            match self {
-                ScalarArg::Str(s) => Some(s.as_ref()),
-                _ => None,
-            }
+    struct TypedValueSeed<'a, 'k> {
+        buf: &'a mut Vec<u8>,
+        name: &'k str,
+        expected: Option<BlobMsgType>,
+        blob_err: &'a mut Option<UbusError>,
+    }
+
+    impl TypedValueSeed<'_, '_> {
+        fn map_blob_err<T, E: de::Error>(
+            blob_err: &mut Option<UbusError>,
+            res: Result<T, UbusError>,
+        ) -> Result<T, E> {
+            res.map_err(|e| {
+                *blob_err = Some(e);
+                E::custom("blob encoding error")
+            })
         }
 
-        fn as_i64(&self) -> Option<i64> {
-            match *self {
-                ScalarArg::I64(n) => Some(n),
-                ScalarArg::U64(n) => i64::try_from(n).ok(),
-                _ => None,
-            }
+        fn write_bytes<E: de::Error>(&mut self, ty: BlobMsgType, bytes: &[u8]) -> Result<(), E> {
+            Self::map_blob_err(
+                self.blob_err,
+                BlobMsgBuilder::write_extended_in(self.buf, ty.value(), self.name, bytes),
+            )
         }
 
-        fn as_f64(&self) -> Option<f64> {
-            match *self {
-                ScalarArg::F64(n) => Some(n),
-                ScalarArg::I64(n) => Some(n as f64),
-                ScalarArg::U64(n) => Some(n as f64),
-                _ => None,
-            }
+        fn write_str<E: de::Error>(&mut self, s: &str) -> Result<(), E> {
+            Self::map_blob_err(
+                self.blob_err,
+                BlobMsgBuilder::write_extended_str_in(self.buf, self.name, s),
+            )
         }
 
-        fn as_bool(&self) -> Option<bool> {
-            match *self {
-                ScalarArg::Bool(b) => Some(b),
-                _ => None,
+        fn write_int<E: de::Error>(
+            &mut self,
+            val: i64,
+            fits_i32: bool,
+            as_f64: f64,
+        ) -> Result<(), E> {
+            match self.expected {
+                None if fits_i32 => self.write_bytes(BlobMsgType::INT32, &(val as i32).to_be_bytes()),
+                None | Some(BlobMsgType::INT64) => {
+                    self.write_bytes(BlobMsgType::INT64, &val.to_be_bytes())
+                }
+                Some(BlobMsgType::INT32) => {
+                    self.write_bytes(BlobMsgType::INT32, &(val as i32).to_be_bytes())
+                }
+                Some(BlobMsgType::INT16) => {
+                    self.write_bytes(BlobMsgType::INT16, &(val as i16).to_be_bytes())
+                }
+                Some(BlobMsgType::BOOL) => {
+                    self.write_bytes(BlobMsgType::BOOL, &(val as i8).to_be_bytes())
+                }
+                Some(BlobMsgType::DOUBLE) => {
+                    self.write_bytes(BlobMsgType::DOUBLE, &as_f64.to_be_bytes())
+                }
+                _ => Ok(()),
             }
         }
     }
 
-    impl<'de> Deserialize<'de> for ScalarArg<'de> {
-        fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-            struct ScalarVisitor;
+    impl<'de> Visitor<'de> for TypedValueSeed<'_, '_> {
+        type Value = ();
 
-            impl<'de> Visitor<'de> for ScalarVisitor {
-                type Value = ScalarArg<'de>;
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a JSON argument value")
+        }
 
-                fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                    formatter.write_str("any JSON value")
+        fn visit_bool<E: de::Error>(mut self, v: bool) -> Result<Self::Value, E> {
+            match self.expected {
+                None | Some(BlobMsgType::BOOL) => {
+                    self.write_bytes(BlobMsgType::BOOL, &[u8::from(v)])
                 }
-
-                fn visit_borrowed_str<E: de::Error>(self, v: &'de str) -> Result<Self::Value, E> {
-                    Ok(ScalarArg::Str(Cow::Borrowed(v)))
-                }
-
-                fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
-                    Ok(ScalarArg::Str(Cow::Owned(String::from(v))))
-                }
-
-                fn visit_string<E: de::Error>(self, v: String) -> Result<Self::Value, E> {
-                    Ok(ScalarArg::Str(Cow::Owned(v)))
-                }
-
-                fn visit_i64<E: de::Error>(self, v: i64) -> Result<Self::Value, E> {
-                    Ok(ScalarArg::I64(v))
-                }
-
-                fn visit_u64<E: de::Error>(self, v: u64) -> Result<Self::Value, E> {
-                    Ok(ScalarArg::U64(v))
-                }
-
-                fn visit_f64<E: de::Error>(self, v: f64) -> Result<Self::Value, E> {
-                    Ok(ScalarArg::F64(v))
-                }
-
-                fn visit_bool<E: de::Error>(self, v: bool) -> Result<Self::Value, E> {
-                    Ok(ScalarArg::Bool(v))
-                }
-
-                fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
-                    Ok(ScalarArg::Other)
-                }
-
-                fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
-                    Ok(ScalarArg::Other)
-                }
-
-                fn visit_seq<A: SeqAccess<'de>>(
-                    self,
-                    mut seq: A,
-                ) -> Result<Self::Value, A::Error> {
-                    while seq.next_element::<IgnoredAny>()?.is_some() {}
-                    Ok(ScalarArg::Other)
-                }
-
-                fn visit_map<A: MapAccess<'de>>(
-                    self,
-                    mut map: A,
-                ) -> Result<Self::Value, A::Error> {
-                    while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
-                    Ok(ScalarArg::Other)
-                }
+                _ => Ok(()),
             }
+        }
 
-            deserializer.deserialize_any(ScalarVisitor)
+        fn visit_i64<E: de::Error>(mut self, v: i64) -> Result<Self::Value, E> {
+            self.write_int(v, i32::try_from(v).is_ok(), v as f64)
+        }
+
+        fn visit_u64<E: de::Error>(mut self, v: u64) -> Result<Self::Value, E> {
+            self.write_int(v as i64, i32::try_from(v).is_ok(), v as f64)
+        }
+
+        fn visit_f64<E: de::Error>(mut self, v: f64) -> Result<Self::Value, E> {
+            match self.expected {
+                None | Some(BlobMsgType::DOUBLE) => {
+                    self.write_bytes(BlobMsgType::DOUBLE, &v.to_be_bytes())
+                }
+                _ => Ok(()),
+            }
+        }
+
+        fn visit_str<E: de::Error>(mut self, v: &str) -> Result<Self::Value, E> {
+            match self.expected {
+                None | Some(BlobMsgType::STRING) => self.write_str(v),
+                _ => Ok(()),
+            }
+        }
+
+        fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(())
+        }
+
+        fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(())
+        }
+
+        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+            if matches!(self.expected, None | Some(BlobMsgType::ARRAY)) {
+                let id = BlobMsgType::ARRAY.value();
+                let start = Self::map_blob_err(
+                    self.blob_err,
+                    BlobMsgBuilder::begin_extended_in(self.buf, id, self.name),
+                )?;
+                while seq
+                    .next_element_seed(TypedValueSeed {
+                        buf: self.buf,
+                        name: "",
+                        expected: None,
+                        blob_err: self.blob_err,
+                    })?
+                    .is_some()
+                {}
+                Self::map_blob_err(
+                    self.blob_err,
+                    BlobMsgBuilder::end_extended_in(self.buf, start, id),
+                )?;
+            } else {
+                while seq.next_element::<IgnoredAny>()?.is_some() {}
+            }
+            Ok(())
+        }
+
+        fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+            if matches!(self.expected, None | Some(BlobMsgType::TABLE)) {
+                let id = BlobMsgType::TABLE.value();
+                let start = Self::map_blob_err(
+                    self.blob_err,
+                    BlobMsgBuilder::begin_extended_in(self.buf, id, self.name),
+                )?;
+                while let Some(k) = map.next_key::<Cow<'de, str>>()? {
+                    map.next_value_seed(TypedValueSeed {
+                        buf: self.buf,
+                        name: k.as_ref(),
+                        expected: None,
+                        blob_err: self.blob_err,
+                    })?;
+                }
+                Self::map_blob_err(
+                    self.blob_err,
+                    BlobMsgBuilder::end_extended_in(self.buf, start, id),
+                )?;
+            } else {
+                while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+            }
+            Ok(())
+        }
+    }
+
+    impl<'de> DeserializeSeed<'de> for TypedValueSeed<'_, '_> {
+        type Value = ();
+
+        fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
+            deserializer.deserialize_any(self)
+        }
+    }
+
+    struct PolicyEncoder<'a> {
+        args: Vec<u8>,
+        lookup_policy: &'a mut dyn FnMut(&str) -> FieldPolicy,
+        blob_err: Option<UbusError>,
+    }
+
+    impl<'de> Visitor<'de> for &mut PolicyEncoder<'_> {
+        type Value = ();
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a JSON object")
+        }
+
+        fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+            while let Some(key) = map.next_key::<Cow<'de, str>>()? {
+                let expected = match (self.lookup_policy)(key.as_ref()) {
+                    FieldPolicy::Typed(ty) => Some(ty),
+                    FieldPolicy::Dynamic => None,
+                    FieldPolicy::Skip => {
+                        map.next_value::<IgnoredAny>()?;
+                        continue;
+                    }
+                };
+                map.next_value_seed(TypedValueSeed {
+                    buf: &mut self.args,
+                    name: key.as_ref(),
+                    expected,
+                    blob_err: &mut self.blob_err,
+                })?;
+            }
+            Ok(())
+        }
+
+        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+            while seq.next_element::<IgnoredAny>()?.is_some() {}
+            Ok(())
+        }
+
+        fn visit_bool<E: de::Error>(self, _v: bool) -> Result<Self::Value, E> {
+            Ok(())
+        }
+
+        fn visit_i64<E: de::Error>(self, _v: i64) -> Result<Self::Value, E> {
+            Ok(())
+        }
+
+        fn visit_u64<E: de::Error>(self, _v: u64) -> Result<Self::Value, E> {
+            Ok(())
+        }
+
+        fn visit_f64<E: de::Error>(self, _v: f64) -> Result<Self::Value, E> {
+            Ok(())
+        }
+
+        fn visit_str<E: de::Error>(self, _v: &str) -> Result<Self::Value, E> {
+            Ok(())
+        }
+
+        fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(())
+        }
+
+        fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(())
+        }
+    }
+
+    impl<'de> DeserializeSeed<'de> for &mut PolicyEncoder<'_> {
+        type Value = ();
+
+        fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
+            deserializer.deserialize_any(self)
         }
     }
 
     /// Encode a JSON object string directly into a single `Vec<u8>` of extended `BlobMsg` attributes
-    /// according to a policy lookup closure, without allocating `serde_json::Value` or intermediate buffers.
-    pub(crate) fn encode_json_with_policy<F>(
+    /// according to a policy lookup closure, supporting nested arrays/tables without `serde_json::Value`.
+    pub fn encode_json_with_policy(
         json: &str,
-        lookup_type: F,
-    ) -> Result<Vec<u8>, UbusError>
-    where
-        F: FnMut(&str) -> Option<BlobMsgType>,
-    {
+        lookup_policy: &mut dyn FnMut(&str) -> FieldPolicy,
+    ) -> Result<Vec<u8>, UbusError> {
         if json.is_empty() {
             return Ok(Vec::new());
         }
-
-        struct PolicyEncoder<F> {
-            args: Vec<u8>,
-            lookup_type: F,
-            blob_err: Option<UbusError>,
-        }
-
-        impl<'de, F> Visitor<'de> for &mut PolicyEncoder<F>
-        where
-            F: FnMut(&str) -> Option<BlobMsgType>,
-        {
-            type Value = ();
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("a JSON argument value")
-            }
-
-            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
-                while let Some(key) = map.next_key::<Cow<'de, str>>()? {
-                    let key_str = key.as_ref();
-                    if let Some(arg_typ) = (self.lookup_type)(key_str) {
-                        let val = map.next_value::<ScalarArg<'de>>()?;
-                        let res = match arg_typ {
-                            BlobMsgType::STRING => {
-                                let start = BlobMsgBuilder::begin_extended_in(
-                                    &mut self.args,
-                                    arg_typ.value(),
-                                    key_str,
-                                );
-                                start.and_then(|start| {
-                                    if let Some(s) = val.as_str() {
-                                        self.args.extend_from_slice(s.as_bytes());
-                                        self.args.push(b'\0');
-                                    }
-                                    BlobMsgBuilder::end_extended_in(
-                                        &mut self.args,
-                                        start,
-                                        arg_typ.value(),
-                                    )
-                                })
-                            }
-                            BlobMsgType::INT64 => {
-                                let start = BlobMsgBuilder::begin_extended_in(
-                                    &mut self.args,
-                                    arg_typ.value(),
-                                    key_str,
-                                );
-                                start.and_then(|start| {
-                                    if let Some(num) = val.as_i64() {
-                                        self.args.extend_from_slice(&num.to_be_bytes());
-                                    }
-                                    BlobMsgBuilder::end_extended_in(
-                                        &mut self.args,
-                                        start,
-                                        arg_typ.value(),
-                                    )
-                                })
-                            }
-                            BlobMsgType::INT32 => {
-                                let start = BlobMsgBuilder::begin_extended_in(
-                                    &mut self.args,
-                                    arg_typ.value(),
-                                    key_str,
-                                );
-                                start.and_then(|start| {
-                                    if let Some(num) = val.as_i64() {
-                                        self.args.extend_from_slice(&(num as i32).to_be_bytes());
-                                    }
-                                    BlobMsgBuilder::end_extended_in(
-                                        &mut self.args,
-                                        start,
-                                        arg_typ.value(),
-                                    )
-                                })
-                            }
-                            BlobMsgType::INT16 => {
-                                let start = BlobMsgBuilder::begin_extended_in(
-                                    &mut self.args,
-                                    arg_typ.value(),
-                                    key_str,
-                                );
-                                start.and_then(|start| {
-                                    if let Some(num) = val.as_i64() {
-                                        self.args.extend_from_slice(&(num as i16).to_be_bytes());
-                                    }
-                                    BlobMsgBuilder::end_extended_in(
-                                        &mut self.args,
-                                        start,
-                                        arg_typ.value(),
-                                    )
-                                })
-                            }
-                            BlobMsgType::INT8 => {
-                                let start = BlobMsgBuilder::begin_extended_in(
-                                    &mut self.args,
-                                    arg_typ.value(),
-                                    key_str,
-                                );
-                                start.and_then(|start| {
-                                    if let Some(num) = val.as_i64() {
-                                        self.args.extend_from_slice(&(num as i8).to_be_bytes());
-                                    } else if let Some(b) = val.as_bool() {
-                                        let tf: i8 = if b { 1 } else { 0 };
-                                        self.args.extend_from_slice(&tf.to_be_bytes());
-                                    }
-                                    BlobMsgBuilder::end_extended_in(
-                                        &mut self.args,
-                                        start,
-                                        arg_typ.value(),
-                                    )
-                                })
-                            }
-                            BlobMsgType::DOUBLE => {
-                                let start = BlobMsgBuilder::begin_extended_in(
-                                    &mut self.args,
-                                    arg_typ.value(),
-                                    key_str,
-                                );
-                                start.and_then(|start| {
-                                    if let Some(num) = val.as_f64() {
-                                        self.args.extend_from_slice(&num.to_be_bytes());
-                                    }
-                                    BlobMsgBuilder::end_extended_in(
-                                        &mut self.args,
-                                        start,
-                                        arg_typ.value(),
-                                    )
-                                })
-                            }
-                            _ => Ok(()),
-                        };
-                        if let Err(e) = res {
-                            self.blob_err = Some(e);
-                            return Err(de::Error::custom("blob encoding error"));
-                        }
-                    } else {
-                        map.next_value::<IgnoredAny>()?;
-                    }
-                }
-                Ok(())
-            }
-
-            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
-                while seq.next_element::<IgnoredAny>()?.is_some() {}
-                Ok(())
-            }
-
-            fn visit_bool<E: de::Error>(self, _v: bool) -> Result<Self::Value, E> {
-                Ok(())
-            }
-
-            fn visit_i64<E: de::Error>(self, _v: i64) -> Result<Self::Value, E> {
-                Ok(())
-            }
-
-            fn visit_u64<E: de::Error>(self, _v: u64) -> Result<Self::Value, E> {
-                Ok(())
-            }
-
-            fn visit_f64<E: de::Error>(self, _v: f64) -> Result<Self::Value, E> {
-                Ok(())
-            }
-
-            fn visit_str<E: de::Error>(self, _v: &str) -> Result<Self::Value, E> {
-                Ok(())
-            }
-
-            fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
-                Ok(())
-            }
-
-            fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
-                Ok(())
-            }
-        }
-
-        impl<'de, F> DeserializeSeed<'de> for &mut PolicyEncoder<F>
-        where
-            F: FnMut(&str) -> Option<BlobMsgType>,
-        {
-            type Value = ();
-
-            fn deserialize<D: Deserializer<'de>>(
-                self,
-                deserializer: D,
-            ) -> Result<Self::Value, D::Error> {
-                deserializer.deserialize_any(self)
-            }
-        }
-
         let mut encoder = PolicyEncoder {
             args: Vec::new(),
-            lookup_type,
+            lookup_policy,
             blob_err: None,
         };
         let mut de = serde_json::Deserializer::from_str(json);
-        match (&mut encoder).deserialize(&mut de) {
-            Ok(()) => {
-                de.end().map_err(UbusError::ParseArguments)?;
-                Ok(encoder.args)
-            }
-            Err(e) => {
-                if let Some(blob_err) = encoder.blob_err {
-                    Err(blob_err)
-                } else {
-                    Err(UbusError::ParseArguments(e))
-                }
-            }
-        }
+        (&mut encoder)
+            .deserialize(&mut de)
+            .map_err(|e| encoder.blob_err.take().unwrap_or(UbusError::ParseArguments(e)))?;
+        de.end()?;
+        Ok(encoder.args)
     }
 
-    impl<'a> UbusObject<'a> {
+    /// Encode any JSON object string directly into ubus extended blob bytes using dynamic JSON type inference.
+    pub fn json_to_blob(json: &str) -> Result<Vec<u8>, UbusError> {
+        encode_json_with_policy(json, &mut |_| FieldPolicy::Dynamic)
+    }
+
+    impl UbusObject<'_> {
         pub fn args_from_json(&self, method: &str, json: &str) -> Result<Vec<u8>, UbusError> {
             if json.is_empty() {
                 return Ok(Vec::new());
             }
-            // Validate that the method exists once if the input is a JSON object
             let method_entry = self.methods.get(method);
-            let mut need_method_check = false;
-            let args = encode_json_with_policy(json, |k| {
-                need_method_check = true;
-                method_entry.and_then(|m| m.policy.get(k).copied())
+            let mut saw_key = false;
+            let args = encode_json_with_policy(json, &mut |k| {
+                saw_key = true;
+                match method_entry {
+                    Some(m) if m.policy.is_empty() => FieldPolicy::Dynamic,
+                    Some(m) => m
+                        .policy
+                        .get(k)
+                        .copied()
+                        .map_or(FieldPolicy::Skip, FieldPolicy::Typed),
+                    None => FieldPolicy::Skip,
+                }
             })?;
-            if need_method_check && method_entry.is_none() {
-                return Err(UbusError::InvalidMethod(method.to_string()));
-            }
-            // Also check when json is `{}` (an empty JSON object)
-            if method_entry.is_none() && json.trim_start().starts_with('{') {
+            if method_entry.is_none() && (saw_key || json.trim_start().starts_with('{')) {
                 return Err(UbusError::InvalidMethod(method.to_string()));
             }
             Ok(args)
@@ -390,4 +330,6 @@ mod json_args {
 }
 
 #[cfg(feature = "json")]
-pub(crate) use json_args::encode_json_with_policy;
+pub(crate) use json_args::{FieldPolicy, encode_json_with_policy};
+#[cfg(feature = "json")]
+pub use json_args::json_to_blob;

@@ -1,4 +1,4 @@
-use crate::{BlobMsg, BlobMsgPayload, BlobMsgType, UbusError};
+use crate::{BlobMsg, BlobMsgPayload, BlobMsgType, OptionInvalidExt, UbusError};
 
 use alloc::vec::Vec;
 use core::convert::{TryFrom, TryInto};
@@ -26,14 +26,10 @@ impl BlobTag {
 
     pub fn new(id: u32, len: usize, extended: bool) -> Result<Self, UbusError> {
         if id > Self::ID_MASK || len < Self::SIZE || len > Self::LEN_MASK as usize {
-            Err(UbusError::InvalidData("Invalid TAG construction"))
-        } else {
-            let mut val = (len as u32) | (id << Self::ID_SHIFT);
-            if extended {
-                val |= Self::EXTENDED_BIT;
-            }
-            Ok(Self(val.into()))
+            return Err(UbusError::InvalidData("Invalid TAG construction"));
         }
+        let ext = if extended { Self::EXTENDED_BIT } else { 0 };
+        Ok(Self(((len as u32) | (id << Self::ID_SHIFT) | ext).into()))
     }
 
     /// Create BlobTag from a byte array
@@ -66,12 +62,12 @@ impl BlobTag {
     }
     /// Number of padding bytes between this blob and the next blob
     #[inline]
-    pub(crate) fn padding(&self) -> usize {
+    pub(crate) fn padding(self) -> usize {
         Self::align_padding(self.size())
     }
     /// Number of bytes to the next tag
     #[inline]
-    pub(crate) fn next_tag(&self) -> usize {
+    pub(crate) fn next_tag(self) -> usize {
         self.size() + self.padding()
     }
     /// Total number of bytes following the tag (extended header + data)
@@ -95,7 +91,7 @@ impl core::fmt::Debug for BlobTag {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         let (id, len) = (self.id(), self.size());
         let extended = if self.is_extended() { ", extended" } else { "" };
-        write!(f, "BlobTag(id={:?}, len={}{})", id, len, extended)
+        write!(f, "BlobTag(id={id:?}, len={len}{extended})")
     }
 }
 
@@ -114,39 +110,31 @@ impl<'a> BlobBuilder<'a> {
     }
 
     pub fn push_bool(&mut self, id: u32, data: bool) -> Result<(), UbusError> {
-        self.push_slice(id, if data { &[1] } else { &[0] })
+        self.push_slice(id, &[u8::from(data)])
     }
 
-    pub fn push_str(&mut self, id: u32, data: &str) -> Result<(), UbusError> {
-        let str_bytes = data.as_bytes();
-        let unpadded = BlobTag::SIZE + str_bytes.len() + 1;
-        let tag = BlobTag::new(id, unpadded, false)?;
+    fn push_raw(&mut self, id: u32, data: &[u8], nul_terminate: bool) -> Result<(), UbusError> {
+        let data_end = BlobTag::SIZE + data.len();
+        let tag = BlobTag::new(id, data_end + usize::from(nul_terminate), false)?;
         let total = tag.next_tag();
         let buffer = &mut self.buffer[self.offset..];
         if total > buffer.len() {
             return Err(UbusError::InvalidData("BlobBuilder overflow!"));
         }
         buffer[..BlobTag::SIZE].copy_from_slice(&tag.to_bytes());
-        buffer[BlobTag::SIZE..BlobTag::SIZE + str_bytes.len()].copy_from_slice(str_bytes);
-        buffer[BlobTag::SIZE + str_bytes.len()..total].fill(0);
+        buffer[BlobTag::SIZE..data_end].copy_from_slice(data);
+        buffer[data_end..total].fill(0);
         self.offset += total;
         Ok(())
+    }
+
+    pub fn push_str(&mut self, id: u32, data: &str) -> Result<(), UbusError> {
+        self.push_raw(id, data.as_bytes(), true)
     }
 
     /// Push a raw byte slice into the blob without iterator overhead.
     pub fn push_slice(&mut self, id: u32, data: &[u8]) -> Result<(), UbusError> {
-        let unpadded = BlobTag::SIZE + data.len();
-        let tag = BlobTag::new(id, unpadded, false)?;
-        let total = tag.next_tag();
-        let buffer = &mut self.buffer[self.offset..];
-        if total > buffer.len() {
-            return Err(UbusError::InvalidData("BlobBuilder overflow!"));
-        }
-        buffer[..BlobTag::SIZE].copy_from_slice(&tag.to_bytes());
-        buffer[BlobTag::SIZE..unpadded].copy_from_slice(data);
-        buffer[unpadded..total].fill(0);
-        self.offset += total;
-        Ok(())
+        self.push_raw(id, data, false)
     }
 
     pub fn push_bytes<'b>(
@@ -155,12 +143,13 @@ impl<'a> BlobBuilder<'a> {
         data: impl IntoIterator<Item = &'b u8>,
     ) -> Result<(), UbusError> {
         let buffer = &mut self.buffer[self.offset..];
+        let payload = buffer
+            .get_mut(BlobTag::SIZE..)
+            .or_invalid("BlobBuilder overflow!")?;
+        let mut dst = payload.iter_mut();
         let mut offset = BlobTag::SIZE;
-        for b in data {
-            if offset >= buffer.len() {
-                return Err(UbusError::InvalidData("BlobBuilder overflow!"));
-            }
-            buffer[offset] = *b;
+        for &b in data {
+            *dst.next().or_invalid("BlobBuilder overflow!")? = b;
             offset += 1;
         }
 
@@ -264,62 +253,47 @@ macro_rules! payload_try_into_number {
         impl<'a> TryInto<$ty> for Payload<'a> {
             type Error = UbusError;
             fn try_into(self) -> Result<$ty, Self::Error> {
-                let size = size_of::<$ty>();
-                if let Some(Ok(bytes)) = self.0.get(..size).map(TryInto::try_into) {
-                    Ok(<$ty>::from_be_bytes(bytes))
-                } else {
-                    Err(UbusError::InvalidData(concat!("Blob wrong size for ", stringify!($ty))))
-                }
+                self.0
+                    .get(..size_of::<$ty>())
+                    .and_then(|s| s.try_into().ok())
+                    .map(<$ty>::from_be_bytes)
+                    .or_invalid(concat!("Blob wrong size for ", stringify!($ty)))
             }
         }
     };
 }
 payload_try_into_number!(u8, i8, u16, i16, u32, i32, u64, i64, f64,);
 
-impl<'a> TryInto<bool> for Payload<'a> {
+impl TryInto<bool> for Payload<'_> {
     type Error = UbusError;
     fn try_into(self) -> Result<bool, Self::Error> {
-        let &value = self
-            .0
+        self.0
             .first()
-            .ok_or(UbusError::InvalidData("Blob wrong size for bool"))?;
-        Ok(value != 0)
+            .map(|&value| value != 0)
+            .or_invalid("Blob wrong size for bool")
     }
 }
 
 impl<'a> TryInto<&'a str> for Payload<'a> {
     type Error = UbusError;
     fn try_into(self) -> Result<&'a str, UbusError> {
-        let data = match self.0.strip_suffix(b"\0") {
-            Some(stripped) => stripped,
-            None => self.0,
-        };
-        str::from_utf8(data).map_err(UbusError::from)
+        str::from_utf8(self.0.strip_suffix(b"\0").unwrap_or(self.0)).map_err(UbusError::from)
     }
 }
 
 impl<'a> TryInto<Vec<BlobMsg<'a>>> for Payload<'a> {
     type Error = UbusError;
     fn try_into(self) -> Result<Vec<BlobMsg<'a>>, UbusError> {
-        let iter = BlobIter::<Blob>::new(self.into());
-        let mut list = Vec::new();
-        for item in iter {
-            list.push(item.try_into()?);
-        }
-        Ok(list)
+        BlobIter::<Blob>::new(self.0).map(TryInto::try_into).collect()
     }
 }
 
 impl<'a> TryInto<HashMap<&'a str, BlobMsgPayload<'a>>> for Payload<'a> {
     type Error = UbusError;
     fn try_into(self) -> Result<HashMap<&'a str, BlobMsgPayload<'a>>, UbusError> {
-        let mut map = HashMap::<&str, BlobMsgPayload>::new();
-        let iter = BlobIter::<Blob>::new(self.into());
-        for item in iter {
-            let item: BlobMsg = item.try_into()?;
-            map.insert(item.name, item.data);
-        }
-        Ok(map)
+        BlobIter::<Blob>::new(self.0)
+            .map(|item| BlobMsg::try_from(item).map(|m| (m.name, m.data)))
+            .collect()
     }
 }
 
@@ -365,17 +339,14 @@ impl<'a, T: TryFrom<Blob<'a>>> Iterator for BlobIter<'a, T> {
         if self.data.is_empty() {
             return None;
         }
-        if let Ok(blob) = Blob::from_bytes(self.data) {
-            // Advance the internal pointer to the next tag safely
-            let next = blob.tag.next_tag().min(self.data.len());
-            self.data = &self.data[next..];
-            if let Ok(item) = blob.try_into() {
-                return Some(item);
-            }
-        } else {
+        let Ok(blob) = Blob::from_bytes(self.data) else {
             self.data = &[];
-        }
-        None
+            return None;
+        };
+        // Advance the internal pointer to the next tag safely
+        let next = blob.tag.next_tag().min(self.data.len());
+        self.data = &self.data[next..];
+        blob.try_into().ok()
     }
 }
 
@@ -444,80 +415,79 @@ impl<'a> BlobMsgBuilder<'a> {
         Ok(())
     }
 
-    /// Serialize a `BlobMsg` tree directly into a single `Vec<u8>` without intermediate `Vec` allocations.
-    pub fn write_blobmsg_into(buffer: &mut Vec<u8>, blobmsg: &BlobMsg<'_>) -> Result<(), UbusError> {
-        let name = blobmsg.name;
-        match &blobmsg.data {
-            BlobMsgPayload::String(s) => {
-                let id = BlobMsgType::STRING.value();
-                let start = Self::begin_extended_in(buffer, id, name)?;
-                buffer.extend_from_slice(s.as_bytes());
-                buffer.push(b'\0');
-                Self::end_extended_in(buffer, start, id)?;
+    /// Write a named extended blob with raw payload bytes into `buffer`.
+    pub(crate) fn write_extended_in(
+        buffer: &mut Vec<u8>,
+        id: u32,
+        name: &str,
+        data: &[u8],
+    ) -> Result<(), UbusError> {
+        let start = Self::begin_extended_in(buffer, id, name)?;
+        buffer.extend_from_slice(data);
+        Self::end_extended_in(buffer, start, id)
+    }
+
+    /// Write a named extended string blob (NUL-terminated) into `buffer`.
+    pub(crate) fn write_extended_str_in(
+        buffer: &mut Vec<u8>,
+        name: &str,
+        s: &str,
+    ) -> Result<(), UbusError> {
+        let id = BlobMsgType::STRING.value();
+        let start = Self::begin_extended_in(buffer, id, name)?;
+        buffer.extend_from_slice(s.as_bytes());
+        buffer.push(b'\0');
+        Self::end_extended_in(buffer, start, id)
+    }
+
+    fn write_blobmsg_payload(
+        buffer: &mut Vec<u8>,
+        name: &str,
+        payload: &BlobMsgPayload<'_>,
+    ) -> Result<(), UbusError> {
+        match payload {
+            BlobMsgPayload::String(s) => Self::write_extended_str_in(buffer, name, s),
+            BlobMsgPayload::Int64(n) => {
+                Self::write_extended_in(buffer, BlobMsgType::INT64.value(), name, &n.to_be_bytes())
             }
-            BlobMsgPayload::Int64(num) => {
-                let id = BlobMsgType::INT64.value();
-                let start = Self::begin_extended_in(buffer, id, name)?;
-                buffer.extend_from_slice(&num.to_be_bytes());
-                Self::end_extended_in(buffer, start, id)?;
+            BlobMsgPayload::Int32(n) => {
+                Self::write_extended_in(buffer, BlobMsgType::INT32.value(), name, &n.to_be_bytes())
             }
-            BlobMsgPayload::Int32(num) => {
-                let id = BlobMsgType::INT32.value();
-                let start = Self::begin_extended_in(buffer, id, name)?;
-                buffer.extend_from_slice(&num.to_be_bytes());
-                Self::end_extended_in(buffer, start, id)?;
+            BlobMsgPayload::Int16(n) => {
+                Self::write_extended_in(buffer, BlobMsgType::INT16.value(), name, &n.to_be_bytes())
             }
-            BlobMsgPayload::Int16(num) => {
-                let id = BlobMsgType::INT16.value();
-                let start = Self::begin_extended_in(buffer, id, name)?;
-                buffer.extend_from_slice(&num.to_be_bytes());
-                Self::end_extended_in(buffer, start, id)?;
+            BlobMsgPayload::Int8(n) => {
+                Self::write_extended_in(buffer, BlobMsgType::INT8.value(), name, &n.to_be_bytes())
             }
-            BlobMsgPayload::Int8(num) => {
-                let id = BlobMsgType::INT8.value();
-                let start = Self::begin_extended_in(buffer, id, name)?;
-                buffer.extend_from_slice(&num.to_be_bytes());
-                Self::end_extended_in(buffer, start, id)?;
-            }
-            BlobMsgPayload::Double(num) => {
-                let id = BlobMsgType::DOUBLE.value();
-                let start = Self::begin_extended_in(buffer, id, name)?;
-                buffer.extend_from_slice(&num.to_be_bytes());
-                Self::end_extended_in(buffer, start, id)?;
+            BlobMsgPayload::Double(n) => {
+                Self::write_extended_in(buffer, BlobMsgType::DOUBLE.value(), name, &n.to_be_bytes())
             }
             BlobMsgPayload::Bool(b) => {
-                let id = BlobMsgType::BOOL.value();
-                let start = Self::begin_extended_in(buffer, id, name)?;
-                buffer.extend_from_slice(&b.to_be_bytes());
-                Self::end_extended_in(buffer, start, id)?;
+                Self::write_extended_in(buffer, BlobMsgType::BOOL.value(), name, &b.to_be_bytes())
             }
-            BlobMsgPayload::Unknown(typeid, bytes) => {
-                let start = Self::begin_extended_in(buffer, *typeid, name)?;
-                buffer.extend_from_slice(bytes);
-                Self::end_extended_in(buffer, start, *typeid)?;
-            }
+            BlobMsgPayload::Unknown(id, bytes) => Self::write_extended_in(buffer, *id, name, bytes),
             BlobMsgPayload::Array(list) => {
                 let id = BlobMsgType::ARRAY.value();
                 let start = Self::begin_extended_in(buffer, id, name)?;
                 for item in list {
                     Self::write_blobmsg_into(buffer, item)?;
                 }
-                Self::end_extended_in(buffer, start, id)?;
+                Self::end_extended_in(buffer, start, id)
             }
             BlobMsgPayload::Table(table) => {
                 let id = BlobMsgType::TABLE.value();
                 let start = Self::begin_extended_in(buffer, id, name)?;
                 for (&k, v) in table {
-                    let inner = BlobMsg {
-                        name: k,
-                        data: v.clone(),
-                    };
-                    Self::write_blobmsg_into(buffer, &inner)?;
+                    Self::write_blobmsg_payload(buffer, k, v)?;
                 }
-                Self::end_extended_in(buffer, start, id)?;
+                Self::end_extended_in(buffer, start, id)
             }
         }
-        Ok(())
+    }
+
+    /// Serialize a `BlobMsg` tree directly into a single `Vec<u8>` without intermediate `Vec` allocations.
+    pub fn write_blobmsg_into(buffer: &mut Vec<u8>, blobmsg: &BlobMsg<'_>) -> Result<(), UbusError> {
+        Self::write_blobmsg_payload(buffer, blobmsg.name, &blobmsg.data)
     }
 
     pub fn new_extended(id: u32, name: &str) -> Self {
@@ -530,14 +500,18 @@ impl<'a> BlobMsgBuilder<'a> {
     }
 
     pub fn tag(&self) -> BlobTag {
-        let tag_bytes: [u8; BlobTag::SIZE] = self.buffer[..4].try_into().unwrap();
+        let tag_bytes: [u8; BlobTag::SIZE] = self.buffer[..BlobTag::SIZE].try_into().unwrap();
         BlobTag::from_bytes(tag_bytes)
+    }
+
+    fn finish_push(&mut self) -> Result<(), UbusError> {
+        let id = self.tag().id();
+        Self::end_extended_in(&mut self.buffer, 0, id)
     }
 
     pub fn push_slice(&mut self, data: &[u8]) -> Result<(), UbusError> {
         self.buffer.extend_from_slice(data);
-        let id = self.tag().id();
-        Self::end_extended_in(&mut self.buffer, 0, id)
+        self.finish_push()
     }
 
     pub fn push_bytes<'b>(
@@ -545,8 +519,7 @@ impl<'a> BlobMsgBuilder<'a> {
         data: impl IntoIterator<Item = &'b u8>,
     ) -> Result<(), UbusError> {
         self.buffer.extend(data.into_iter().copied());
-        let id = self.tag().id();
-        Self::end_extended_in(&mut self.buffer, 0, id)
+        self.finish_push()
     }
 
     pub fn push_int64(&mut self, data: i64) -> Result<(), UbusError> {
@@ -570,16 +543,14 @@ impl<'a> BlobMsgBuilder<'a> {
     }
 
     pub fn push_bool(&mut self, data: bool) -> Result<(), UbusError> {
-        let tf: i8 = if data { 1 } else { 0 };
-        self.push_slice(&tf.to_be_bytes())
+        self.push_slice(&[u8::from(data)])
     }
 
     pub fn push_str(&mut self, data: &str) -> Result<(), UbusError> {
         self.buffer.reserve(data.len() + 4);
         self.buffer.extend_from_slice(data.as_bytes());
         self.buffer.push(b'\0');
-        let id = self.tag().id();
-        Self::end_extended_in(&mut self.buffer, 0, id)
+        self.finish_push()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -599,9 +570,9 @@ impl<'a> BlobMsgBuilder<'a> {
     }
 
     pub fn build(&self) -> Blob<'_> {
-        let data = self.data();
-        let tag = BlobTag::from_bytes(self.buffer[..4].try_into().unwrap());
-        let data = &data[4..];
-        Blob { tag, data }
+        Blob {
+            tag: self.tag(),
+            data: &self.buffer[BlobTag::SIZE..],
+        }
     }
 }

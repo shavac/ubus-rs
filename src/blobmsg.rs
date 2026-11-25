@@ -38,53 +38,37 @@ pub enum BlobMsgPayload<'a> {
 impl fmt::Display for BlobMsgPayload<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            BlobMsgPayload::Array(list) => write!(f, "{}", List(list)),
-            BlobMsgPayload::Table(dict) => write!(f, "{}", Dict(dict)),
-            BlobMsgPayload::String(s) => write!(f, "\"{}\"", s),
-            BlobMsgPayload::Int64(num) => write!(f, "{}", num),
-            BlobMsgPayload::Int32(num) => write!(f, "{}", num),
-            BlobMsgPayload::Int16(num) => write!(f, "{}", num),
-            BlobMsgPayload::Int8(num) => write!(f, "{}", num),
-            BlobMsgPayload::Bool(num) => write!(f, "{}", *num == 1),
-            BlobMsgPayload::Double(num) => write!(f, "{}", num),
+            BlobMsgPayload::Array(list) => {
+                f.write_str("[")?;
+                list.iter().enumerate().try_for_each(|(i, msg)| {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    fmt::Display::fmt(&msg.data, f)
+                })?;
+                f.write_str("]")
+            }
+            BlobMsgPayload::Table(dict) => {
+                f.write_str("{")?;
+                dict.iter().enumerate().try_for_each(|(i, (k, v))| {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "\"{k}\": {v}")
+                })?;
+                f.write_str("}")
+            }
+            BlobMsgPayload::String(s) => write!(f, "\"{s}\""),
+            BlobMsgPayload::Int64(n) => fmt::Display::fmt(n, f),
+            BlobMsgPayload::Int32(n) => fmt::Display::fmt(n, f),
+            BlobMsgPayload::Int16(n) => fmt::Display::fmt(n, f),
+            BlobMsgPayload::Int8(n) => fmt::Display::fmt(n, f),
+            BlobMsgPayload::Bool(n) => f.write_str(if *n == 1 { "true" } else { "false" }),
+            BlobMsgPayload::Double(n) => fmt::Display::fmt(n, f),
             BlobMsgPayload::Unknown(typeid, bytes) => {
-                write!(f, "\"type={} data={:?}\"", typeid, bytes)
+                write!(f, "\"type={typeid} data={bytes:?}\"")
             }
         }
-    }
-}
-
-struct List<'a>(&'a [BlobMsg<'a>]);
-impl fmt::Display for List<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("[")?;
-        let mut first = true;
-        for msg in self.0 {
-            if !first {
-                f.write_str(", ")?;
-            } else {
-                first = false;
-            }
-            write!(f, "{}", msg.data)?;
-        }
-        f.write_str("]")
-    }
-}
-
-struct Dict<'a>(&'a HashMap<&'a str, BlobMsgPayload<'a>>);
-impl fmt::Display for Dict<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("{")?;
-        let mut first = true;
-        for (k, v) in self.0 {
-            if first {
-                first = false;
-            } else {
-                f.write_str(", ")?;
-            }
-            write!(f, "\"{}\": {}", k, v)?;
-        }
-        f.write_str("}")
     }
 }
 
@@ -96,10 +80,9 @@ pub struct BlobMsg<'a> {
 
 impl fmt::Display for BlobMsg<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if !self.name.is_empty() {
-            write!(f, "\"{}\": {}", self.name, self.data)
-        } else {
-            write!(f, "{}", self.data)
+        if self.name.is_empty() {
+            return fmt::Display::fmt(&self.data, f);
         }
+        write!(f, "\"{}\": {}", self.name, self.data)
     }
 }

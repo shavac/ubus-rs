@@ -7,21 +7,6 @@ extern crate std;
 /// Macro for defining helpful enum-like opaque structs
 macro_rules! values {
     (
-        $vis:vis $name:ident ( $repr:ty ) -> $other:ty {
-            $( $variant:ident = $value:literal -> $othervalue:literal ),* $(,)?
-        }
-    ) => {
-        values!($vis $name($repr) { $( $variant = $value , )* });
-        impl $name {
-            pub const fn other(self) -> Option<$other> {
-                match self {
-                    $( Self::$variant => Some($othervalue), )*
-                    _ => None,
-                }
-            }
-        }
-    };
-    (
         $vis:vis $name:ident ( $repr:ty ) {
             $( $variant:ident = $value:literal ),* $(,)?
         }
@@ -45,10 +30,11 @@ macro_rules! values {
         }
         impl core::fmt::Debug for $name {
             fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
-                match *self {
-                    $( Self::$variant => write!(f, stringify!($variant)), )*
-                    unknown => write!(f, "UNKNOWN({})", unknown.0),
-                }
+                let name = match *self {
+                    $( Self::$variant => stringify!($variant), )*
+                    unknown => return write!(f, "UNKNOWN({})", unknown.0),
+                };
+                f.write_str(name)
             }
         }
     };
@@ -59,18 +45,6 @@ macro_rules! invalid_data_panic {
 }
 
 macro_rules! valid_data {
-    (($left:expr) >= ($right:expr), $msg:literal) => {{
-        if !(($left) >= ($right)) {
-            invalid_data_panic!("Invalid Data: {} ({:?} < {:?})", $msg, $left, $right);
-            return Err(crate::UbusError::InvalidData($msg));
-        }
-    }};
-    (($left:expr) == ($right:expr), $msg:literal) => {{
-        if !(($left) == ($right)) {
-            invalid_data_panic!("Invalid Data: {} ({:?} != {:?})", $msg, $left, $right);
-            return Err(crate::UbusError::InvalidData($msg));
-        }
-    }};
     ($thing:expr, $msg:literal) => {{
         if !($thing) {
             invalid_data_panic!("Invalid Data: {}", $msg);
@@ -96,29 +70,27 @@ pub enum Error<T = NoIO> {
 
 impl<T: core::fmt::Display> core::fmt::Display for Error<T> {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
-        use Error::*;
         match self {
-            IO(e) => write!(f, "IO Error: {}", e),
-            InvalidData(e) => write!(f, "Invalid Data: {}", e),
-            Status(e) => write!(f, "Ubus Status: {}", e),
+            Self::IO(e) => write!(f, "IO Error: {e}"),
+            Self::InvalidData(e) => write!(f, "Invalid Data: {e}"),
+            Self::Status(e) => write!(f, "Ubus Status: {e}"),
         }
     }
 }
 
 impl<T: IOError> From<Error<NoIO>> for Error<T> {
     fn from(e: Error<NoIO>) -> Self {
-        use Error::*;
         match e {
-            IO(_) => unreachable!(),
-            InvalidData(v) => InvalidData(v),
-            Status(v) => Status(v),
+            Error::IO(never) => match never {},
+            Error::InvalidData(v) => Self::InvalidData(v),
+            Error::Status(v) => Self::Status(v),
         }
     }
 }
 
 impl<T> From<core::convert::Infallible> for Error<T> {
-    fn from(_: core::convert::Infallible) -> Self {
-        unreachable!()
+    fn from(never: core::convert::Infallible) -> Self {
+        match never {}
     }
 }
 
@@ -128,6 +100,18 @@ pub trait IO {
     type Error: IOError;
     fn put(&mut self, data: &[u8]) -> Result<(), UbusError>;
     fn get(&mut self, data: &mut [u8]) -> Result<(), UbusError>;
+    fn set_read_timeout(
+        &mut self,
+        _timeout: Option<core::time::Duration>,
+    ) -> Result<(), UbusError> {
+        Ok(())
+    }
+    fn set_write_timeout(
+        &mut self,
+        _timeout: Option<core::time::Duration>,
+    ) -> Result<(), UbusError> {
+        Ok(())
+    }
 }
 
 mod blob;
@@ -144,5 +128,6 @@ pub use blobmsg::*;
 pub use connection::*;
 pub use serde_blob::*;
 pub use ubuserror::*;
+pub(crate) use ubuserror::OptionInvalidExt;
 pub use ubusmsg::*;
 pub use ubusobj::*;

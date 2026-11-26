@@ -29,7 +29,7 @@ fn write_msg(stream: &mut UnixStream, header: UbusMsgHeader, payload_attrs: &[u8
     stream.write_all(payload_attrs).unwrap();
 }
 
-fn write_status(stream: &mut UnixStream, seq: storage_endian::BEu16, peer: u32, status: i32) {
+fn write_status(stream: &mut UnixStream, seq: BEu16, peer: u32, status: i32) {
     let mut buf = [0u8; 32];
     let mut bb = BlobBuilder::from_bytes(&mut buf);
     bb.push_u32(BlobAttrId::STATUS.value(), status as u32)
@@ -53,6 +53,12 @@ fn test_protocol_constants_status_and_connection_size() {
     assert_eq!(UbusCmdType::MONITOR.value(), 11);
     assert_eq!(UbusCmdType::INVOKE_FD.value(), 12);
     assert!(size_of::<Connection<UnixStream>>() <= 80);
+    assert_eq!(core::mem::align_of::<BlobTag>(), 4);
+    assert_eq!(size_of::<UbusMsgHeader>(), 8);
+    assert_eq!(BEu16::from(0x1234u16).to_be_bytes(), [0x12, 0x34]);
+    assert_eq!(BEu16::from_be_bytes([0x12, 0x34]).get(), 0x1234);
+    assert_eq!(BEu32::from(0x1234_5678u32).to_be_bytes(), [0x12, 0x34, 0x56, 0x78]);
+    assert_eq!(BEu32::from_be_bytes([0x12, 0x34, 0x56, 0x78]).get(), 0x1234_5678);
 
     assert_eq!(UbusStatus::OK.as_str(), "Success");
     assert_eq!(UbusStatus::METHOD_NOT_FOUND.as_str(), "Method not found");
@@ -1444,6 +1450,176 @@ fn test_wait_for_existing_and_delayed() {
         .unwrap();
     assert_eq!(id, 0x7777);
     assert_eq!(conn.timeout(), None);
+
+    mock_ubusd.join().unwrap();
+}
+
+#[test]
+fn test_buffer_high_water_mark_reclamation() {
+    let (client, mut server) = UnixStream::pair().unwrap();
+
+    let mock_ubusd = std::thread::spawn(move || {
+        server.write_all(TEST_HELLO).unwrap();
+
+        // 1. Large fire-and-forget invoke_no_reply (~12 KiB)
+        let (hdr1, body1) = read_msg(&mut server);
+        assert_eq!(hdr1.cmd_type, UbusCmdType::INVOKE);
+        assert!(body1.len() >= 12 * 1024);
+
+        // 2. Large RPC invoke (~16 KiB reply + status)
+        let (hdr2, _) = read_msg(&mut server);
+        assert_eq!(hdr2.cmd_type, UbusCmdType::INVOKE);
+        let big_blob = vec![b'B'; 16 * 1024];
+        let mut rep_buf = vec![0u8; 16 * 1024 + 32];
+        let mut rb = BlobBuilder::from_bytes(&mut rep_buf);
+        rb.push_slice(BlobAttrId::DATA.value(), &big_blob).unwrap();
+        let rlen = rb.len();
+        write_msg(
+            &mut server,
+            UbusMsgHeader {
+                version: UbusMsgVersion::CURRENT,
+                cmd_type: UbusCmdType::DATA,
+                sequence: hdr2.sequence,
+                peer: 10.into(),
+            },
+            &rep_buf[..rlen],
+        );
+        write_status(&mut server, hdr2.sequence, 10, 0);
+
+        // 3. Low-level next_message: 16 KiB frame followed by 2048-byte frame (total_len <= 4096)
+        write_msg(
+            &mut server,
+            UbusMsgHeader {
+                version: UbusMsgVersion::CURRENT,
+                cmd_type: UbusCmdType::DATA,
+                sequence: 1u16.into(),
+                peer: 10.into(),
+            },
+            &rep_buf[..rlen],
+        );
+        let small_blob = [0x5au8; 2032];
+        let mut small_buf = [0u8; 2048];
+        let mut sb = BlobBuilder::from_bytes(&mut small_buf);
+        sb.push_slice(BlobAttrId::DATA.value(), &small_blob)
+            .unwrap();
+        let slen = sb.len();
+        assert_eq!(UbusMsgHeader::SIZE + BlobTag::SIZE + slen, 2048);
+        write_msg(
+            &mut server,
+            UbusMsgHeader {
+                version: UbusMsgVersion::CURRENT,
+                cmd_type: UbusCmdType::DATA,
+                sequence: 2u16.into(),
+                peer: 10.into(),
+            },
+            &small_buf[..slen],
+        );
+
+        // 4. Server dispatch_one receiving ~16 KiB INVOKE request
+        let big_req = vec![b'C'; 16 * 1024];
+        let mut req_buf = vec![0u8; 16 * 1024 + 64];
+        let mut qb = BlobBuilder::from_bytes(&mut req_buf);
+        qb.push_u32(BlobAttrId::OBJID.value(), 42).unwrap();
+        qb.push_str(BlobAttrId::METHOD.value(), "big_srv").unwrap();
+        qb.push_slice(BlobAttrId::DATA.value(), &big_req).unwrap();
+        let qlen = qb.len();
+        write_msg(
+            &mut server,
+            UbusMsgHeader {
+                version: UbusMsgVersion::CURRENT,
+                cmd_type: UbusCmdType::INVOKE,
+                sequence: 3u16.into(),
+                peer: 0x100.into(),
+            },
+            &req_buf[..qlen],
+        );
+        let (srv_st_hdr, _) = read_msg(&mut server);
+        assert_eq!(srv_st_hdr.cmd_type, UbusCmdType::STATUS);
+
+        // 5. Burst of 12 out-of-band INVOKE frames before PING STATUS reply
+        let (ping_hdr, _) = read_msg(&mut server);
+        assert_eq!(ping_hdr.cmd_type, UbusCmdType::PING);
+        let mut burst_buf = [0u8; 64];
+        let mut bb = BlobBuilder::from_bytes(&mut burst_buf);
+        bb.push_u32(BlobAttrId::OBJID.value(), 42).unwrap();
+        bb.push_str(BlobAttrId::METHOD.value(), "burst").unwrap();
+        bb.push_bool(BlobAttrId::NO_REPLY.value(), true).unwrap();
+        let blen = bb.len();
+        for i in 0..12u16 {
+            write_msg(
+                &mut server,
+                UbusMsgHeader {
+                    version: UbusMsgVersion::CURRENT,
+                    cmd_type: UbusCmdType::INVOKE,
+                    sequence: (100 + i).into(),
+                    peer: 0x200.into(),
+                },
+                &burst_buf[..blen],
+            );
+        }
+        write_status(&mut server, ping_hdr.sequence, 0, 0);
+    });
+
+    let mut conn = Connection::new(client).unwrap();
+
+    // 1. Large send shrinks after send_frame
+    let big_send = vec![b'A'; 12 * 1024];
+    conn.invoke_no_reply(10, "big_send", &big_send).unwrap();
+    assert!(conn.buffer_capacity() <= BUFFER_HIGH_WATER_MARK);
+
+    // 2. Large invoke receive shrinks on finish_deadline
+    let mut got_recv_len = 0;
+    conn.invoke(10, "big_recv", &[], |bi| {
+        got_recv_len = bi.as_bytes().len();
+    })
+    .unwrap();
+    assert_eq!(got_recv_len, 16 * 1024);
+    assert!(conn.buffer_capacity() <= BUFFER_HIGH_WATER_MARK);
+
+    // 3. Low-level next_message grows for 16 KiB, then shrinks on 2048-byte frame (<= 4096)
+    {
+        let msg = conn.next_message().unwrap();
+        assert!(msg.blob.data.len() >= 16 * 1024);
+    }
+    assert!(conn.buffer_capacity() >= 16 * 1024);
+    {
+        let msg = conn.next_message().unwrap();
+        assert_eq!(msg.blob.data.len(), 2036);
+    }
+    assert!(conn.buffer_capacity() <= BUFFER_HIGH_WATER_MARK);
+
+    // 4. Server dispatch_one shrinks after handling large request
+    let mut srv_len = 0;
+    let handled = conn
+        .dispatch_one(|req| {
+            srv_len = req.data.len();
+            Ok(RequestReply::Status(UbusStatus::OK))
+        })
+        .unwrap();
+    assert!(handled);
+    assert_eq!(srv_len, 16 * 1024);
+    assert!(conn.buffer_capacity() <= BUFFER_HIGH_WATER_MARK);
+
+    // 5. Burst of 12 queued out-of-band messages drained via dispatch_pending
+    conn.ping().unwrap();
+    assert_eq!(conn.pending_count(), 12);
+    let mut drained = 0usize;
+    let count = conn
+        .dispatch_pending(|ev| {
+            if let IncomingEvent::Invoke(req) = ev {
+                assert_eq!(req.method, "burst");
+                drained += 1;
+            }
+            Ok(RequestReply::Status(UbusStatus::OK))
+        })
+        .unwrap();
+    assert_eq!(count, 12);
+    assert_eq!(drained, 12);
+    assert_eq!(conn.pending_count(), 0);
+
+    // 6. Explicit shrink_buffers releases all unused capacity
+    conn.shrink_buffers();
+    assert_eq!(conn.buffer_capacity(), 0);
 
     mock_ubusd.join().unwrap();
 }

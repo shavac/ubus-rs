@@ -114,6 +114,83 @@ pub trait IO {
     }
 }
 
+macro_rules! define_be_int {
+    ($name:ident, $prim:ty, [$($fmt:ident),+]) => {
+        /// Big-endian unsigned integer stored in wire byte order with native alignment.
+        #[derive(Copy, Clone, Default, PartialEq, Eq, Hash)]
+        #[repr(transparent)]
+        pub struct $name($prim);
+
+        impl $name {
+            /// Wrap a native integer in big-endian storage order.
+            #[inline]
+            pub const fn new(val: $prim) -> Self {
+                Self(val.to_be())
+            }
+
+            /// Read the integer in host byte order.
+            #[inline]
+            pub const fn get(self) -> $prim {
+                <$prim>::from_be(self.0)
+            }
+
+            /// Construct from big-endian wire bytes without changing alignment.
+            #[inline]
+            pub const fn from_be_bytes(bytes: [u8; core::mem::size_of::<$prim>()]) -> Self {
+                Self(<$prim>::from_ne_bytes(bytes))
+            }
+
+            /// Extract raw big-endian wire bytes.
+            #[inline]
+            pub const fn to_be_bytes(self) -> [u8; core::mem::size_of::<$prim>()] {
+                self.0.to_ne_bytes()
+            }
+        }
+
+        impl From<$prim> for $name {
+            #[inline]
+            fn from(val: $prim) -> Self {
+                Self::new(val)
+            }
+        }
+
+        impl From<$name> for $prim {
+            #[inline]
+            fn from(val: $name) -> Self {
+                val.get()
+            }
+        }
+
+        impl Ord for $name {
+            #[inline]
+            fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+                self.get().cmp(&other.get())
+            }
+        }
+
+        impl PartialOrd for $name {
+            #[inline]
+            fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+                Some(self.cmp(other))
+            }
+        }
+
+        $(
+            impl core::fmt::$fmt for $name {
+                #[inline]
+                fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                    core::fmt::$fmt::fmt(&self.get(), f)
+                }
+            }
+        )+
+    };
+    ($($name:ident($prim:ty)),+ $(,)?) => {
+        $(define_be_int!($name, $prim, [Debug, Display, LowerHex, UpperHex]);)+
+    };
+}
+
+define_be_int!(BEu16(u16), BEu32(u32));
+
 mod blob;
 mod blobmsg;
 mod connection;

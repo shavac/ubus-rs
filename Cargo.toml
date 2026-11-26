@@ -1,15 +1,13 @@
 [package]
 name = "ubus"
-version = "0.2.1"
+version = "0.99.0"
 authors = ["James Lee <jbit@jbit.net>", "Kshava Lewis <knightmare1980@gmail.com>"]
 edition = "2024"
-description = "Work-in-progress: OpenWRT ubus client library in pure Rust"
+description = "OpenWrt ubus client and service library in pure Rust"
+repository = "https://github.com/shavac/ubus-rs"
 keywords = ["embedded", "openwrt"]
 categories = ["embedded", "os", "os::linux-apis","api-bindings"]
 license = "BSD-2-Clause"
-
-[badges]
-maintenance = { status = "experimental" }
 
 [features]
 default = ["json"]
@@ -19,7 +17,6 @@ no_std = []
 [dependencies]
 serde = { version = "1.0.193", default-features = false, features = ["derive", "std"] }
 serde_json = { version = "1.0.108", optional = true }
-storage_endian = { git = "https://github.com/jbit/storage_endian.git", version = "0.1.0" }
 thiserror = "1.0.52"
 
 [[example]]

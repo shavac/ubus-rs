@@ -1,12 +1,11 @@
-use crate::{BlobMsg, BlobMsgPayload, BlobMsgType, OptionInvalidExt, UbusError};
+use crate::{BEu32, BlobMsg, BlobMsgPayload, BlobMsgType, OptionInvalidExt, UbusError};
 
 use alloc::vec::Vec;
 use core::convert::{TryFrom, TryInto};
 use core::marker::PhantomData;
-use core::mem::{align_of, size_of, transmute};
+use core::mem::{align_of, size_of};
 use core::str;
 use std::collections::HashMap;
-use storage_endian::BEu32;
 
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -35,12 +34,12 @@ impl BlobTag {
     /// Create BlobTag from a byte array
     #[inline]
     pub fn from_bytes(bytes: [u8; Self::SIZE]) -> Self {
-        unsafe { transmute(bytes) }
+        Self(BEu32::from_be_bytes(bytes))
     }
     /// Dump out bytes of BlobTag
     #[inline]
     pub fn to_bytes(self) -> [u8; Self::SIZE] {
-        unsafe { transmute(self) }
+        self.0.to_be_bytes()
     }
     #[inline]
     fn raw(self) -> u32 {

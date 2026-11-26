@@ -7,9 +7,9 @@ use core::convert::TryInto;
 use core::time::Duration;
 use std::collections::HashMap;
 use std::time::Instant;
-use storage_endian::BEu16;
 
 const MAX_PENDING_MSGS: usize = 64;
+const PENDING_HIGH_WATER_MARK: usize = 8;
 
 #[derive(Clone)]
 struct PendingMsg {
@@ -154,6 +154,29 @@ impl<T: IO> Connection<T> {
         self.pending.len()
     }
 
+    /// Current heap capacity (in bytes) of the internal I/O frame buffer.
+    pub fn buffer_capacity(&self) -> usize {
+        self.buffer.capacity()
+    }
+
+    /// Release all unused capacity from the internal I/O and pending-message buffers.
+    pub fn shrink_buffers(&mut self) {
+        self.buffer.clear();
+        self.buffer.shrink_to_fit();
+        self.pending.shrink_to_fit();
+    }
+
+    fn reclaim_buffer(&mut self) {
+        crate::ubusmsg::shrink_buffer_to_high_water(&mut self.buffer, 0);
+    }
+
+    fn reclaim_buffers(&mut self) {
+        self.reclaim_buffer();
+        if self.pending.is_empty() && self.pending.capacity() > PENDING_HIGH_WATER_MARK {
+            self.pending.shrink_to_fit();
+        }
+    }
+
     /// Set the read and write I/O timeout for subsequent operations on this connection.
     pub fn set_timeout(&mut self, timeout: Option<Duration>) -> Result<(), UbusError> {
         let ms = timeout.map_or(0, |d| u32::try_from(d.as_millis()).unwrap_or(u32::MAX).max(1));
@@ -176,6 +199,7 @@ impl<T: IO> Connection<T> {
         if deadline.is_some() {
             let _ = self.io.set_read_timeout(self.timeout());
         }
+        self.reclaim_buffers();
     }
 
     #[inline]
@@ -274,12 +298,16 @@ impl<T: IO> Connection<T> {
         if self.buffer.len() < req_cap {
             self.buffer.resize(req_cap, 0);
         }
-        let mut msg = UbusMsgBuilder::new(&mut self.buffer, &header)?;
-        for &attr in attrs {
-            msg.put(attr)?;
-        }
-        let len = msg.finish().len();
-        self.io.put(&self.buffer[..len])
+        let res = (|| {
+            let mut msg = UbusMsgBuilder::new(&mut self.buffer, &header)?;
+            for &attr in attrs {
+                msg.put(attr)?;
+            }
+            let len = msg.finish().len();
+            self.io.put(&self.buffer[..len])
+        })();
+        self.reclaim_buffer();
+        res
     }
 
     fn send_request(
@@ -955,6 +983,7 @@ impl<T: IO> Connection<T> {
             let action = Self::prepare_dispatch(pending.header, &pending.data, handler)?;
             count += usize::from(self.execute_dispatch(action)?);
         }
+        self.reclaim_buffers();
         Ok(count)
     }
 
@@ -977,7 +1006,9 @@ impl<T: IO> Connection<T> {
             let message = self.next_message()?;
             Self::prepare_dispatch(message.header, message.blob.data, handler)?
         };
-        self.execute_dispatch(action)
+        let res = self.execute_dispatch(action);
+        self.reclaim_buffers();
+        res
     }
 
     /// Read and dispatch one incoming message (draining queued pending messages first), handling
@@ -1274,6 +1305,7 @@ impl<T: IO> Connection<T> {
                         self.reply_status(pending.header, reg_id, UbusStatus::OK)?;
                     }
                     if !keep_going {
+                        self.reclaim_buffers();
                         return Ok(());
                     }
                     continue;
@@ -1281,6 +1313,7 @@ impl<T: IO> Connection<T> {
             }
             self.pending.push_back(pending);
         }
+        self.reclaim_buffers();
 
         loop {
             let (hdr, tag) = self.read_raw_until(deadline)?;
@@ -1298,6 +1331,7 @@ impl<T: IO> Connection<T> {
                             self.reply_status(hdr, reg_id, UbusStatus::OK)?;
                         }
                         if !keep_going {
+                            self.reclaim_buffer();
                             return Ok(());
                         }
                     } else {
@@ -1309,6 +1343,7 @@ impl<T: IO> Connection<T> {
                 }
                 _ => {}
             }
+            self.reclaim_buffer();
         }
     }
 
@@ -1356,6 +1391,7 @@ impl<T: IO> Connection<T> {
         self.sequence = 0;
         self.pending.clear();
         self.buffer.clear();
+        self.reclaim_buffers();
         self.read_hello()
     }
 
@@ -1382,13 +1418,18 @@ impl<T: IO> Connection<T> {
                 UbusCmdType::PING => self.send_ping_reply(hdr)?,
                 UbusCmdType::MONITOR => {
                     let total_len = UbusMsg::PREFIX_LEN + tag.inner_len();
-                    let mon =
-                        MonitorMessage::from_blob_data(&self.buffer[UbusMsg::PREFIX_LEN..total_len])?;
-                    if !on_msg(mon) {
+                    let keep_going = {
+                        let mon = MonitorMessage::from_blob_data(
+                            &self.buffer[UbusMsg::PREFIX_LEN..total_len],
+                        )?;
+                        on_msg(mon)
+                    };
+                    self.reclaim_buffer();
+                    if !keep_going {
                         return Ok(());
                     }
                 }
-                _ => {}
+                _ => self.reclaim_buffer(),
             }
         }
     }

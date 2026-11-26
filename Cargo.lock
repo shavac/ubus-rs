@@ -76,11 +76,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "storage_endian"
-version = "0.1.0"
-source = "git+https://github.com/jbit/storage_endian.git#866f041a53b6b04c41fe39e7f0960429365f8440"
-
-[[package]]
 name = "syn"
 version = "2.0.119"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -124,11 +119,10 @@ dependencies = [
 
 [[package]]
 name = "ubus"
-version = "0.2.1"
+version = "0.99.0"
 dependencies = [
  "serde",
  "serde_json",
- "storage_endian",
  "thiserror",
 ]
 

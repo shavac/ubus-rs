@@ -1,12 +1,23 @@
-use crate::{Blob, BlobBuilder, BlobIter, BlobTag, IO, Payload, UbusError};
+use crate::{BEu16, BEu32, Blob, BlobBuilder, BlobIter, BlobTag, IO, Payload, UbusError};
 use alloc::vec::Vec;
 use core::convert::{TryFrom, TryInto};
-use core::mem::{size_of, transmute};
+use core::mem::size_of;
 use serde::{Deserialize, Serialize};
-use storage_endian::{BEu16, BEu32};
 
 /// Maximum allowed size of a single ubus message (64 KiB).
 pub const MAX_MSG_SIZE: usize = 64 * 1024;
+
+/// Maximum I/O buffer capacity retained after handling oversized messages (4 KiB).
+pub const BUFFER_HIGH_WATER_MARK: usize = 4096;
+
+/// Truncate `buffer` to `keep_len` and shrink excess capacity down to [`BUFFER_HIGH_WATER_MARK`].
+#[inline]
+pub(crate) fn shrink_buffer_to_high_water(buffer: &mut Vec<u8>, keep_len: usize) {
+    if buffer.capacity() > BUFFER_HIGH_WATER_MARK {
+        buffer.truncate(keep_len);
+        buffer.shrink_to(BUFFER_HIGH_WATER_MARK);
+    }
+}
 
 /// Built-in ubusd system object IDs.
 pub const UBUS_SYSTEM_OBJECT_EVENT: u32 = 1;
@@ -165,12 +176,29 @@ impl UbusMsgHeader {
     /// Create MessageHeader from a byte array
     #[inline]
     pub fn from_bytes(buffer: [u8; Self::SIZE]) -> Self {
-        unsafe { transmute(buffer) }
+        let [version, cmd_type, s0, s1, p0, p1, p2, p3] = buffer;
+        Self {
+            version: UbusMsgVersion::from(version),
+            cmd_type: UbusCmdType::from(cmd_type),
+            sequence: BEu16::from_be_bytes([s0, s1]),
+            peer: BEu32::from_be_bytes([p0, p1, p2, p3]),
+        }
     }
     /// Dump out bytes of MessageHeader
     #[inline]
     pub fn to_bytes(self) -> [u8; Self::SIZE] {
-        unsafe { transmute(self) }
+        let [s0, s1] = self.sequence.to_be_bytes();
+        let [p0, p1, p2, p3] = self.peer.to_be_bytes();
+        [
+            self.version.value(),
+            self.cmd_type.value(),
+            s0,
+            s1,
+            p0,
+            p1,
+            p2,
+            p3,
+        ]
     }
 }
 
@@ -230,14 +258,10 @@ impl<'a> UbusMsg<'a> {
         let total_len = Self::PREFIX_LEN + tag.inner_len();
         valid_data!(total_len <= MAX_MSG_SIZE, "Ubus message exceeds max size");
 
-        if buffer.len() < total_len {
-            buffer.resize(total_len, 0);
-        } else {
-            buffer.truncate(total_len);
-            if buffer.capacity() > 4096 && total_len <= 1024 {
-                buffer.shrink_to(4096);
-            }
+        if total_len <= BUFFER_HIGH_WATER_MARK {
+            shrink_buffer_to_high_water(buffer, Self::PREFIX_LEN);
         }
+        buffer.resize(total_len, 0);
 
         io.get(&mut buffer[Self::PREFIX_LEN..total_len])?;
         Ok((header, tag))
